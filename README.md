@@ -5,6 +5,7 @@ AI-powered penetration testing using the Claude CLI tool. This is a companion to
 ## Overview
 
 Strix CLI Claude provides:
+- **TUI Dashboard**: Terminal UI for managing multiple scans
 - A Docker sandbox with Kali Linux and comprehensive security tools
 - MCP (Model Context Protocol) server exposing pen testing tools to Claude
 - System prompts optimized for security assessment
@@ -19,6 +20,13 @@ Strix CLI Claude provides:
    claude login
    ```
 3. **Python 3.11+**: Required for the wrapper
+4. **screen**: Required for TUI (usually pre-installed on Linux/macOS)
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install screen
+   # macOS
+   brew install screen
+   ```
 
 ## Installation
 
@@ -27,7 +35,38 @@ cd strix-cli-claude
 pip install -e .
 ```
 
-## Usage
+## Quick Start: TUI Dashboard
+
+The easiest way to use Strix CLI Claude is through the TUI (Terminal User Interface):
+
+```bash
+strix-tui
+```
+
+This launches an interactive dashboard where you can:
+- Start new scans with a guided wizard
+- View all running and completed scans
+- Attach to running scans to watch Claude work
+- View scan logs and details
+- Stop or delete scans
+
+### TUI Commands
+
+| Key | Action |
+|-----|--------|
+| `n` | New scan - launch the scan wizard |
+| `a <num>` | Attach to a running scan (e.g., `a 1`) |
+| `v <num>` | View scan details and logs |
+| `s <num>` | Stop a running scan |
+| `d <num>` | Delete a scan |
+| `r` | Refresh the scan list |
+| `q` | Quit the TUI |
+
+When attached to a scan, press `Ctrl+A` then `D` to detach and return to the TUI.
+
+## CLI Usage
+
+For direct command-line usage without the TUI:
 
 ### Basic Usage
 
@@ -45,13 +84,29 @@ strix-cli -t https://example.com -m standard --instruction "Focus on authenticat
 ### Options
 
 ```
--t, --target          Target URL, domain, or IP (required)
+-t, --target          Target URL, domain, IP, or local path (required, can specify multiple)
 -m, --scan-mode       Scan mode: quick, standard, deep (default: deep)
+-o, --output          Output file for vulnerability report (default: ~/strix_report_<timestamp>.md)
 --instruction         Custom instructions for the scan
 --instruction-file    File containing custom instructions
 --image               Custom Docker sandbox image
 --keep-container      Keep container running after scan
 -v, --verbose         Verbose output
+```
+
+### Multiple Targets
+
+You can scan multiple targets (URLs, domains, local code) in a single session:
+
+```bash
+# Scan a web app and its source code (whitebox + blackbox)
+strix-cli -t https://myapp.com -t ./myapp-source
+
+# Scan multiple endpoints
+strix-cli -t https://api.example.com -t https://admin.example.com
+
+# Clone and scan a GitHub repo
+strix-cli -t https://github.com/user/repo -m deep
 ```
 
 ### Scan Modes
@@ -143,10 +198,12 @@ Sandbox stopped.
 
 ## Tips
 
-1. **Be specific**: Provide clear targets and instructions
-2. **Let it work**: Claude will run many steps autonomously
-3. **Check reports**: Vulnerability reports are created in /workspace
-4. **Keep container**: Use `--keep-container` to examine findings after the session
+1. **Use the TUI**: The TUI dashboard is the easiest way to manage scans
+2. **Be specific**: Provide clear targets and instructions
+3. **Let it work**: Claude will run many steps autonomously
+4. **Check reports**: Vulnerability reports are saved to your home directory (or custom path with `-o`)
+5. **Keep container**: Use `--keep-container` to examine findings after the session
+6. **Whitebox testing**: Point to local source code for deeper analysis (`-t ./your-code`)
 
 ## Troubleshooting
 
