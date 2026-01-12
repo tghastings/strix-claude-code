@@ -21,9 +21,7 @@ from rich.style import Style
 from rich import box
 
 from . import scan_manager
-
-# Version
-__version__ = "0.1.0"
+from . import __version__
 
 # Initialize console with force_terminal for better compatibility
 console = Console(force_terminal=True)

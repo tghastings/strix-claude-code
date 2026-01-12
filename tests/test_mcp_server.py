@@ -316,7 +316,7 @@ class TestReportFileOperations:
         header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 
@@ -406,7 +406,7 @@ Send a payload to bypass authentication
         header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 
@@ -464,7 +464,7 @@ Fix the SQL injection first
         header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 {final_sections}

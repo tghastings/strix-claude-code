@@ -1,8 +1,8 @@
 [project]
 name = "strix-claude-code"
-version = "0.1.0"
+version = "1.0.0"
 description = "AI-powered penetration testing using Claude CLI"
-authors = [{name = "Strix CLI Claude"}]
+authors = [{name = "Strix Claude Code"}]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,8 +21,8 @@ dev = [
 ]
 
 [project.scripts]
-strix-cli = "strix_cli_claude.main:main"
-strix-tui = "strix_cli_claude.tui:main"
+strix-claude-cli = "strix_cli_claude.main:main"
+strix-claude-tui = "strix_cli_claude.tui:main"
 
 [build-system]
 requires = ["hatchling"]

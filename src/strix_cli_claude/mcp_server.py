@@ -649,7 +649,7 @@ def create_server() -> Server:
                 header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 
@@ -757,7 +757,7 @@ def create_server() -> Server:
                 header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 
@@ -890,7 +890,7 @@ def create_server() -> Server:
                 header = f"""# Security Assessment Report
 
 **Generated:** {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-**Tool:** Strix CLI Claude
+**Tool:** Strix Claude Code
 
 ---
 {final_sections}

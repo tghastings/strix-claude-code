@@ -1,3 +1,3 @@
-"""Strix CLI Claude - AI-powered penetration testing using Claude CLI."""
+"""Strix Claude Code - AI-powered penetration testing using Claude CLI."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

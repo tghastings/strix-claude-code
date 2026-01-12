@@ -1,10 +1,10 @@
-# Strix CLI Claude
+# Strix Claude Code
 
 AI-powered penetration testing using the Claude CLI tool. This is a companion to [Strix](https://github.com/usestrix/strix) that lets you run security assessments using the Claude CLI instead of direct API calls.
 
 ## Overview
 
-Strix CLI Claude provides:
+Strix Claude Code provides:
 - **TUI Dashboard**: Terminal UI for managing multiple scans
 - A Docker sandbox with Kali Linux and comprehensive security tools
 - MCP (Model Context Protocol) server exposing pen testing tools to Claude
@@ -37,10 +37,10 @@ pip install -e .
 
 ## Quick Start: TUI Dashboard
 
-The easiest way to use Strix CLI Claude is through the TUI (Terminal User Interface):
+The easiest way to use Strix Claude Code is through the TUI (Terminal User Interface):
 
 ```bash
-strix-tui
+strix-claude-tui
 ```
 
 This launches an interactive dashboard where you can:
@@ -72,13 +72,13 @@ For direct command-line usage without the TUI:
 
 ```bash
 # Full penetration test on a target
-strix-cli -t https://example.com
+strix-claude-cli -t https://example.com
 
 # Quick scan for CI/CD
-strix-cli -t https://example.com -m quick
+strix-claude-cli -t https://example.com -m quick
 
 # Standard scan with custom instructions
-strix-cli -t https://example.com -m standard --instruction "Focus on authentication bypass"
+strix-claude-cli -t https://example.com -m standard --instruction "Focus on authentication bypass"
 ```
 
 ### Options
@@ -100,13 +100,13 @@ You can scan multiple targets (URLs, domains, local code) in a single session:
 
 ```bash
 # Scan a web app and its source code (whitebox + blackbox)
-strix-cli -t https://myapp.com -t ./myapp-source
+strix-claude-cli -t https://myapp.com -t ./myapp-source
 
 # Scan multiple endpoints
-strix-cli -t https://api.example.com -t https://admin.example.com
+strix-claude-cli -t https://api.example.com -t https://admin.example.com
 
 # Clone and scan a GitHub repo
-strix-cli -t https://github.com/user/repo -m deep
+strix-claude-cli -t https://github.com/user/repo -m deep
 ```
 
 ### Scan Modes
@@ -169,16 +169,16 @@ The Docker sandbox includes:
 ## Example Session
 
 ```bash
-$ strix-cli -t https://vulnerable-app.example.com -m deep
+$ strix-claude-cli -t https://vulnerable-app.example.com -m deep
 
-Strix CLI Claude - Penetration Testing
+Strix Claude Code - Penetration Testing
 Target: https://vulnerable-app.example.com
 Scan Mode: deep
 Custom Instructions: No
 
 Starting Docker sandbox...
 Sandbox ready!
-  Container: strix-cli-scan-abc123
+  Container: strix-claude-cli-scan-abc123
   Tool server: http://127.0.0.1:54321
 
 Starting Claude CLI...

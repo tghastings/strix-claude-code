@@ -661,15 +661,15 @@ def main(
     scan_id: str | None,
     verbose: bool,
 ):
-    """Strix CLI Claude - AI-powered penetration testing using Claude CLI.
+    """Strix Claude Code - AI-powered penetration testing using Claude CLI.
 
     Example:
-        strix-cli -t https://example.com -m deep
-        strix-cli -t https://example.com -t ./local-code -m deep
-        strix-cli -t 192.168.1.1 --instruction "Focus on SQL injection"
-        strix-cli -t https://example.com -o ./report.md
-        strix-cli -t git@github.com:user/repo.git -m deep
-        strix-cli -t https://github.com/user/repo -m deep
+        strix-claude-cli -t https://example.com -m deep
+        strix-claude-cli -t https://example.com -t ./local-code -m deep
+        strix-claude-cli -t 192.168.1.1 --instruction "Focus on SQL injection"
+        strix-claude-cli -t https://example.com -o ./report.md
+        strix-claude-cli -t git@github.com:user/repo.git -m deep
+        strix-claude-cli -t https://github.com/user/repo -m deep
     """
     # Setup logging
     logging.basicConfig(
@@ -759,7 +759,7 @@ def main(
         f"[bold]Scan Mode:[/bold] {scan_mode}\n"
         f"[bold]Output Report:[/bold] {output_file}\n"
         f"[bold]Custom Instructions:[/bold] {'Yes' if instruction else 'No'}",
-        title="Strix CLI Claude - Penetration Testing",
+        title="Strix Claude Code - Penetration Testing",
     ))
 
     # Start sandbox
