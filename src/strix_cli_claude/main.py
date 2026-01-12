@@ -1,4 +1,4 @@
-"""Main entry point for strix-cli-claude."""
+"""Main entry point for strix-claude-code."""
 
 import atexit
 import json
@@ -150,11 +150,13 @@ METHODOLOGY:
 1. RECONNAISSANCE: Map the entire attack surface first
    - Subdomain enumeration, port scanning, content discovery
    - Technology fingerprinting, API discovery
+   - DOCUMENT: Use write_report to save recon results immediately
 
 2. VULNERABILITY TESTING: Test every input with every applicable technique
    - Use automated tools (nuclei, sqlmap, ffuf)
    - Manual testing for logic flaws
    - Parameter fuzzing and injection testing
+   - DOCUMENT: Call create_vulnerability_report for EACH finding as you discover it
 
 3. VALIDATION: Prove vulnerabilities are real
    - Create working proof-of-concept
@@ -166,26 +168,20 @@ METHODOLOGY:
    - Use write_report for executive summary, recon results, and general notes
    - Every vulnerability MUST have a PoC and CVSS score
 
+DOCUMENT AS YOU GO - THIS IS CRITICAL:
+- Call create_vulnerability_report IMMEDIATELY after confirming each vulnerability
+- Do NOT wait until the end to document findings - you may lose context or forget details
+- After each major phase (recon, scanning, testing), use write_report to summarize progress
+- Use create_note to save interesting observations for later investigation
+- If you find something suspicious but unconfirmed, use write_report to note it for follow-up
+- The report file is your persistent memory - use it frequently
+
 THOROUGHNESS IS EVERYTHING:
 Your goal is 100% coverage. Miss nothing. Check everything. Be exhaustive.
 
-AGENT-BASED THOROUGHNESS:
-Use the Task tool to spawn subagents for comprehensive coverage:
-
-Example - Exhaustive testing with agents:
-```
-# Spawn agents to ensure COMPLETE coverage
-Task(prompt="Perform exhaustive port scan and service enumeration on target X", subagent_type="Bash")
-Task(prompt="Perform complete directory and file discovery on target X", subagent_type="Bash")
-Task(prompt="Test ALL forms and inputs for SQL injection on target X", subagent_type="Bash")
-Task(prompt="Test ALL forms and inputs for XSS on target X", subagent_type="Bash")
-```
-
-WHEN TO USE AGENTS (for thoroughness):
-- Different vulnerability classes: One agent per vuln type ensures nothing missed
-- Multiple targets: One agent per target for complete coverage
-- Deep testing: Agent for SQLi, agent for XSS, agent for SSRF, etc.
-- Validation: Spawn agent to double-check and validate findings
+IMPORTANT: You must use the MCP tools directly (terminal_execute, browser_action, etc.).
+Do NOT try to spawn subagents or use Task tools - they don't have access to the sandbox tools.
+All penetration testing commands must be run through YOUR tool calls.
 
 ACCURACY RULES:
 1. VERIFY every finding before reporting - no false positives

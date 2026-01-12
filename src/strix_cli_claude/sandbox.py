@@ -57,10 +57,16 @@ class Sandbox:
         self._tool_server_token: str | None = None
         self._caido_port: int | None = None
 
-    def _find_available_port(self) -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return cast("int", s.getsockname()[1])
+    def _find_available_port(self, exclude: set[int] | None = None) -> int:
+        """Find an available port, optionally excluding some ports."""
+        exclude = exclude or set()
+        for _ in range(10):  # Try up to 10 times
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0))
+                port = cast("int", s.getsockname()[1])
+                if port not in exclude:
+                    return port
+        raise SandboxError("Could not find available port")
 
     def _generate_token(self) -> str:
         return secrets.token_urlsafe(32)
@@ -112,9 +118,9 @@ class Sandbox:
         except NotFound:
             pass
 
-        # Find available ports
+        # Find available ports (ensure they're different from each other)
         self._caido_port = self._find_available_port()
-        self._tool_server_port = self._find_available_port()
+        self._tool_server_port = self._find_available_port(exclude={self._caido_port})
         self._tool_server_token = self._generate_token()
 
         # Get CPU count for parallel operations

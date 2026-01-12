@@ -129,6 +129,15 @@ class TestFindAvailablePort:
             assert isinstance(port1, int)
             assert isinstance(port2, int)
 
+    def test_excludes_specified_ports(self):
+        """Should not return excluded ports."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+            port1 = sb._find_available_port()
+            port2 = sb._find_available_port(exclude={port1})
+            assert port2 != port1
+
 
 class TestGenerateToken:
     """Tests for _generate_token method."""

@@ -63,18 +63,11 @@ class Theme:
 # ASCII ART BANNER
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BANNER = """[cyan]
-   _____ _______ _____  _______   __
-  / ____|__   __|  __ \|_   _\ \ / /
- | (___    | |  | |__) | | |  \ V /
-  \___ \   | |  |  _  /  | |   > <
-  ____) |  | |  | | \ \ _| |_ / . \
- |_____/   |_|  |_|  \_\_____/_/ \_\\
-[/cyan]"""
+BANNER = "[bold cyan]STRIX[/bold cyan]"
 
 BANNER_MINI = "[cyan bold]▸ STRIX[/cyan bold]"
 
-TAGLINE = "[dim]AI-Powered Penetration Testing[/dim]"
+TAGLINE = "[dim]AI-Powered Penetration Testing with Claude Code[/dim]"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

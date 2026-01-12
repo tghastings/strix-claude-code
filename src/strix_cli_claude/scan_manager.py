@@ -2,6 +2,7 @@
 
 import json
 import os
+import shlex
 import subprocess
 import shutil
 from datetime import datetime
@@ -110,13 +111,28 @@ def start_scan(
 
     # Create a wrapper script for the screen session
     scan_script = SCANS_DIR / f"{scan_id}_run.sh"
+    inner_script = SCANS_DIR / f"{scan_id}_cmd.sh"
     log_file = SCANS_DIR / f"{scan_id}.log"
 
     # Use 'script' command to capture output while preserving TTY interactivity
     # This is critical for Claude CLI which requires a proper terminal
+    # SECURITY: Use shlex.quote() to prevent command injection from user inputs
+    # Write command to inner script to avoid complex quoting issues with script -c
+    quoted_parts = " ".join(shlex.quote(part) for part in cmd_parts)
+    quoted_dir = shlex.quote(str(strix_cli_dir))
+    quoted_log = shlex.quote(str(log_file))
+    quoted_inner = shlex.quote(str(inner_script))
+
+    # Inner script runs the actual command
+    inner_script.write_text(f'''#!/bin/bash
+cd {quoted_dir}
+exec {quoted_parts}
+''')
+    inner_script.chmod(0o755)
+
+    # Outer script uses 'script' to capture TTY output
     scan_script.write_text(f'''#!/bin/bash
-cd {strix_cli_dir}
-script -q -c '{" ".join(cmd_parts)}' {log_file}
+script -q {quoted_log} -c {quoted_inner}
 echo ""
 echo "=== SCAN COMPLETED ==="
 echo "Press Enter to close this session..."
@@ -228,10 +244,14 @@ def delete_scan(scan_id: str) -> bool:
     if log_file.exists():
         log_file.unlink()
 
-    # Delete run script
+    # Delete run scripts
     run_script = SCANS_DIR / f"{scan_id}_run.sh"
     if run_script.exists():
         run_script.unlink()
+
+    cmd_script = SCANS_DIR / f"{scan_id}_cmd.sh"
+    if cmd_script.exists():
+        cmd_script.unlink()
 
     # Clean up temp directories in /tmp (but keep report files)
     tmp_dir = Path("/tmp")

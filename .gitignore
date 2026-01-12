@@ -40,3 +40,10 @@ htmlcov/
 # Misc
 .DS_Store
 *.log
+
+# Environment/secrets
+.env
+.env.*
+*.env
+secrets.json
+credentials.json

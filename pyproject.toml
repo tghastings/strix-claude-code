@@ -1,5 +1,5 @@
 [project]
-name = "strix-cli-claude"
+name = "strix-claude-code"
 version = "0.1.0"
 description = "AI-powered penetration testing using Claude CLI"
 authors = [{name = "Strix CLI Claude"}]

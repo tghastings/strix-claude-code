@@ -31,7 +31,7 @@ Strix CLI Claude provides:
 ## Installation
 
 ```bash
-cd strix-cli-claude
+cd strix-claude-code
 pip install -e .
 ```
 

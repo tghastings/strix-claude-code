@@ -1,4 +1,4 @@
-"""Pytest fixtures for strix-cli-claude tests."""
+"""Pytest fixtures for strix-claude-code tests."""
 
 import tempfile
 from pathlib import Path

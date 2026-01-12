@@ -299,7 +299,7 @@ class TestCreateServer:
     def test_server_has_name(self):
         """Server should have a name."""
         server = create_server()
-        assert server.name == "strix-cli-claude"
+        assert server.name == "strix-claude-code"
 
 
 class TestReportFileOperations:

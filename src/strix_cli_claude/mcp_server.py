@@ -24,6 +24,9 @@ REPORT_FILE = os.getenv("STRIX_REPORT_FILE", "")
 class ToolServerClient:
     """Client to communicate with the sandbox tool server."""
 
+    MAX_RETRIES = 3
+    RETRY_DELAY = 2.0  # seconds
+
     def __init__(self, base_url: str, token: str, agent_id: str):
         self.base_url = base_url
         self.token = token
@@ -35,22 +38,60 @@ class ToolServerClient:
         )
 
     async def call_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Call a tool on the sandbox tool server."""
-        try:
-            response = await self.client.post(
-                "/execute",
-                json={
-                    "tool_name": tool_name,
-                    "kwargs": params,
-                    "agent_id": self.agent_id,
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            return {"error": f"HTTP error: {e.response.status_code} - {e.response.text}"}
-        except Exception as e:
-            return {"error": str(e)}
+        """Call a tool on the sandbox tool server with retry logic."""
+        last_error = None
+
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                response = await self.client.post(
+                    "/execute",
+                    json={
+                        "tool_name": tool_name,
+                        "kwargs": params,
+                        "agent_id": self.agent_id,
+                    },
+                )
+                response.raise_for_status()
+                result = response.json()
+
+                # Validate response structure
+                if not isinstance(result, dict):
+                    last_error = f"Invalid response from tool server: expected dict, got {type(result).__name__}"
+                    continue
+
+                # Check for empty error response (tool server bug)
+                if "error" in result and "result" not in result:
+                    error_msg = result.get("error", "")
+                    if not error_msg:
+                        last_error = "Tool server returned empty error (no result)"
+                        if attempt < self.MAX_RETRIES - 1:
+                            await asyncio.sleep(self.RETRY_DELAY)
+                        continue
+
+                return result
+
+            except httpx.ConnectError as e:
+                last_error = f"Cannot connect to tool server at {self.base_url}. Is the Docker container running? Details: {e}"
+            except httpx.TimeoutException as e:
+                last_error = f"Tool server request timed out. The command may still be running. Details: {e}"
+            except httpx.HTTPStatusError as e:
+                last_error = f"HTTP error {e.response.status_code}: {e.response.text[:500] if e.response.text else 'No response body'}"
+            except Exception as e:
+                last_error = f"Tool server error ({type(e).__name__}): {str(e) or 'Unknown error'}"
+
+            # Wait before retry (except on last attempt)
+            if attempt < self.MAX_RETRIES - 1:
+                await asyncio.sleep(self.RETRY_DELAY)
+
+        # All retries failed
+        return {
+            "error": f"TOOL FAILURE after {self.MAX_RETRIES} attempts: {last_error}\n\n"
+                     f"The sandbox tools are not responding. Please check:\n"
+                     f"1. Is the Docker container still running? (docker ps)\n"
+                     f"2. Check container logs: docker logs <container_name>\n"
+                     f"3. The tool server may need to be restarted\n\n"
+                     f"IMPORTANT: Please inform the user about this issue and wait for guidance before continuing."
+        }
 
     async def close(self):
         await self.client.aclose()
@@ -492,7 +533,7 @@ ONLY call this when you are completely done with the assessment.""",
 
 def create_server() -> Server:
     """Create the MCP server with pentest tools."""
-    server = Server("strix-cli-claude")
+    server = Server("strix-claude-code")
 
     tool_client: ToolServerClient | None = None
 
@@ -537,17 +578,33 @@ def create_server() -> Server:
 
         result = await tool_client.call_tool(name, arguments)
 
-        # Check for error in response
-        if result.get("error"):
-            return [TextContent(type="text", text=f"Error: {result['error']}")]
+        # Check for error in response (handle both non-empty errors and error-only responses)
+        if "error" in result:
+            error_msg = result.get("error")
+            # If there's an error key with no result key, it's definitely an error
+            if "result" not in result:
+                if error_msg:
+                    return [TextContent(type="text", text=f"Error: {error_msg}")]
+                else:
+                    return [TextContent(type="text", text=f"Error: Tool '{name}' failed with no error message. The tool server may not be responding correctly.")]
+            # If there's both error and result, only fail if error is non-empty
+            elif error_msg:
+                return [TextContent(type="text", text=f"Error: {error_msg}")]
 
         # Extract the actual result - tool server returns {"result": {...}, "error": null}
-        tool_result = result.get("result", result)
+        tool_result = result.get("result")
+
+        # Handle missing result
+        if tool_result is None:
+            return [TextContent(type="text", text=f"Error: Tool '{name}' returned no result. Response: {json.dumps(result)[:200]}")]
 
         # Format output - look for content field first (terminal_execute, etc.)
         if isinstance(tool_result, dict):
             if "content" in tool_result:
                 output = tool_result["content"]
+                # Handle empty content
+                if output is None or output == "":
+                    output = "(empty output)"
                 # Add status info if available
                 if tool_result.get("status") == "error":
                     output = f"Error: {output}"
@@ -555,10 +612,20 @@ def create_server() -> Server:
                     output = f"{output}\n[Exit code: {tool_result['exit_code']}]"
             elif "error" in tool_result and tool_result["error"]:
                 output = f"Error: {tool_result['error']}"
+            elif "output" in tool_result:
+                # Some tools return "output" instead of "content"
+                output = tool_result["output"] or "(empty output)"
+            elif "data" in tool_result:
+                # Some tools return "data"
+                output = json.dumps(tool_result["data"], indent=2) if tool_result["data"] else "(no data)"
             else:
                 output = json.dumps(tool_result, indent=2)
+        elif isinstance(tool_result, str):
+            output = tool_result or "(empty output)"
+        elif isinstance(tool_result, list):
+            output = json.dumps(tool_result, indent=2) if tool_result else "(empty list)"
         else:
-            output = str(tool_result)
+            output = str(tool_result) if tool_result else "(empty result)"
 
         return [TextContent(type="text", text=output)]
 
