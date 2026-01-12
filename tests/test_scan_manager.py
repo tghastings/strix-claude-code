@@ -294,8 +294,8 @@ class TestStopDockerContainer:
             assert result is True
             # Check docker stop and rm were called
             calls = [c[0][0] for c in mock_run.call_args_list]
-            assert ["docker", "stop", "strix-cli-scan-scanid"] in calls
-            assert ["docker", "rm", "-f", "strix-cli-scan-scanid"] in calls
+            assert ["docker", "stop", "strix-cli-scanid"] in calls
+            assert ["docker", "rm", "-f", "strix-cli-scanid"] in calls
 
 
 class TestStopScan:
@@ -486,3 +486,130 @@ class TestDeleteScan:
                         # Temp directories should be deleted
                         assert not cli_temp.exists()
                         assert not repos_temp.exists()
+
+    def test_delete_stops_docker_container_full_chain(self, tmp_path):
+        """Should stop Docker container when deleting scan - full chain test.
+
+        This tests the full chain: delete_scan -> stop_scan -> stop_docker_container
+        without mocking stop_scan to ensure Docker containers are actually stopped.
+        """
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        # Create scan metadata
+        metadata = {"scan_id": "dockertest123"}
+        (scans_dir / "dockertest123.json").write_text(json.dumps(metadata))
+
+        # Track all subprocess calls
+        subprocess_calls = []
+
+        def mock_subprocess_run(cmd, **kwargs):
+            subprocess_calls.append(cmd)
+            result = MagicMock()
+            # Simulate different responses based on command
+            if cmd[0] == "screen" and "-list" in cmd:
+                # Screen session exists
+                result.stdout = "There are screens on:\n\t12345.strix-dockertest123\t(Detached)\n"
+            elif cmd[0] == "docker" and "ps" in cmd:
+                # Docker container exists
+                result.stdout = "container123\n"
+            else:
+                result.stdout = ""
+            result.returncode = 0
+            return result
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch("subprocess.run", side_effect=mock_subprocess_run):
+                scan_manager.delete_scan("dockertest123")
+
+        # Verify Docker stop and rm commands were called with correct container name
+        docker_stop_called = any(
+            cmd[0] == "docker" and cmd[1] == "stop" and "strix-cli-dockertest123" in cmd
+            for cmd in subprocess_calls
+        )
+        docker_rm_called = any(
+            cmd[0] == "docker" and cmd[1] == "rm" and "strix-cli-dockertest123" in cmd
+            for cmd in subprocess_calls
+        )
+
+        assert docker_stop_called, f"docker stop not called with correct container name. Calls: {subprocess_calls}"
+        assert docker_rm_called, f"docker rm not called with correct container name. Calls: {subprocess_calls}"
+
+    def test_delete_stops_docker_even_when_screen_not_running(self, tmp_path):
+        """Should stop Docker container even when screen session is not running."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        metadata = {"scan_id": "orphanedcontainer"}
+        (scans_dir / "orphanedcontainer.json").write_text(json.dumps(metadata))
+
+        subprocess_calls = []
+
+        def mock_subprocess_run(cmd, **kwargs):
+            subprocess_calls.append(cmd)
+            result = MagicMock()
+            if cmd[0] == "screen" and "-list" in cmd:
+                # No screen session
+                result.stdout = "No Sockets found in /run/screen/S-user.\n"
+            elif cmd[0] == "docker" and "ps" in cmd:
+                # But Docker container exists (orphaned)
+                result.stdout = "orphaned_container_id\n"
+            else:
+                result.stdout = ""
+            result.returncode = 0
+            return result
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch("subprocess.run", side_effect=mock_subprocess_run):
+                scan_manager.delete_scan("orphanedcontainer")
+
+        # Docker stop should still be called
+        docker_stop_called = any(
+            cmd[0] == "docker" and cmd[1] == "stop" and "strix-cli-orphanedcontainer" in cmd
+            for cmd in subprocess_calls
+        )
+
+        assert docker_stop_called, f"docker stop not called for orphaned container. Calls: {subprocess_calls}"
+
+    def test_delete_uses_correct_container_name_format(self, tmp_path):
+        """Verify delete_scan uses the correct container name format: strix-cli-{scan_id}."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        metadata = {"scan_id": "nametest"}
+        (scans_dir / "nametest.json").write_text(json.dumps(metadata))
+
+        container_names_used = []
+
+        def mock_subprocess_run(cmd, **kwargs):
+            result = MagicMock()
+            result.stdout = ""
+            result.returncode = 0
+
+            # Capture container names from docker commands
+            if cmd[0] == "docker":
+                # docker ps -aq --filter name=X
+                if "ps" in cmd:
+                    for arg in cmd:
+                        if arg.startswith("name="):
+                            container_names_used.append(arg.split("=")[1])
+                    result.stdout = "abc123\n"
+                # docker stop <container_name>
+                elif cmd[1] == "stop" and len(cmd) >= 3:
+                    container_names_used.append(cmd[2])
+                # docker rm -f <container_name>
+                elif cmd[1] == "rm" and len(cmd) >= 4:
+                    container_names_used.append(cmd[3])
+            elif cmd[0] == "screen":
+                result.stdout = ""
+
+            return result
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch("subprocess.run", side_effect=mock_subprocess_run):
+                scan_manager.delete_scan("nametest")
+
+        # All container names should use the correct format
+        assert len(container_names_used) > 0, "No container names captured - docker commands not called"
+        for name in container_names_used:
+            assert name == "strix-cli-nametest", f"Wrong container name format: {name}, expected strix-cli-nametest"

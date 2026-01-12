@@ -767,6 +767,14 @@ def create_server() -> Server:
                 report_path.write_text(header + report_content)
             else:
                 existing = report_path.read_text()
+
+                # Check for duplicate vulnerability (same title)
+                if f"### {title}" in existing:
+                    return [TextContent(
+                        type="text",
+                        text=f"Vulnerability already documented: {title}\n(Skipped duplicate entry)"
+                    )]
+
                 if "## Findings" not in existing:
                     existing += "\n## Findings\n"
                 report_path.write_text(existing + report_content)

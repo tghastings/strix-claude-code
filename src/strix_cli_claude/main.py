@@ -22,12 +22,15 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def get_system_prompt(targets: str, scan_mode: str, cpu_count: int, instruction: str | None = None) -> str:
+def get_system_prompt(targets: str, scan_mode: str, cpu_count: int, instruction: str | None = None, report_file: str | None = None) -> str:
     """Generate the system prompt for pen testing."""
 
     # Check if multiple targets
     target_lines = targets.strip().split("\n")
     is_multi_target = len(target_lines) > 1
+
+    # Default report file path
+    report_path = report_file or "~/strix_report.md"
 
     base_prompt = f"""You are Strix, an elite offensive security operator. You think like a malicious hacker - cunning, creative, relentless, and obsessed with finding ways in.
 
@@ -176,12 +179,155 @@ DOCUMENT AS YOU GO - THIS IS CRITICAL:
 - If you find something suspicious but unconfirmed, use write_report to note it for follow-up
 - The report file is your persistent memory - use it frequently
 
+BUSINESS LOGIC ANALYSIS (Find what scanners miss):
+Before attacking, UNDERSTAND the application deeply:
+- CREATE A STORYBOARD of all user flows and state transitions
+- Document every step of business logic in structured flows
+- Use the application as every type of user to map the full lifecycle
+- Document all state machines (e.g., Order Created -> Paid -> Shipped -> Delivered)
+- Identify trust boundaries between components
+- Map all integrations with third-party services
+- Understand what invariants the application tries to maintain
+- Identify all points where roles, privileges, or data changes hands
+- Look for implicit assumptions in the business logic
+- Consider multi-step attacks that abuse normal functionality
+
+VULNERABILITY CHAINING (Maximum Impact):
+Don't just find individual bugs - CHAIN them for critical impact:
+- Treat EVERY finding as a pivot point: "What does this unlock next?"
+- Continue chaining until you reach: max privilege / max data exposure / max control
+- Cross boundaries deliberately:
+  * user → admin
+  * external → internal
+  * unauthenticated → authenticated
+  * read → write
+  * single-tenant → cross-tenant
+- Combine low-severity findings to create high-impact attacks:
+  * Information disclosure + IDOR = Account takeover
+  * SSRF + Internal API = Data exfiltration
+  * XSS + CSRF = Admin account compromise
+- Validate chains by executing the FULL sequence with available tools
+- Document complete attack paths, not just individual bugs
+
+PERSISTENT TESTING (Never Give Up):
+If initial attempts fail, DO NOT STOP:
+- Research specific technologies for known bypasses
+- Try alternative exploitation techniques
+- Look for edge cases and unusual functionality
+- Test with different user contexts and session states
+- Revisit previously tested areas with new information
+- Consider timing-based and blind exploitation techniques
+- Check for race conditions in state-changing operations
+- Try different encodings: URL, double-URL, Unicode, HTML entities
+- Bypass WAFs with: case variation, comments, chunked encoding
+- If one parameter is filtered, try the same attack on EVERY other parameter
+
+FRAMEWORK-SPECIFIC TESTING:
+Identify the tech stack and apply specialized attacks:
+
+FastAPI/Python:
+- Pydantic validation bypass with type coercion
+- Dependency injection vulnerabilities
+- Background task race conditions
+- OpenAPI spec information disclosure
+
+Next.js/React:
+- API route authorization bypass (/api/* routes)
+- getServerSideProps data exposure
+- Client-side state manipulation
+- SSR injection attacks
+
+GraphQL:
+- Introspection query for schema discovery
+- Batch query attacks (DoS, brute force)
+- Nested query depth attacks
+- Field suggestion enumeration
+- Mutation authorization bypass
+
+Node.js/Express:
+- Prototype pollution
+- NoSQL injection in MongoDB queries
+- JWT vulnerabilities (npm jsonwebtoken)
+- Path traversal in static file serving
+
+Django/Python:
+- ORM injection
+- Template injection in user content
+- Session serialization attacks
+- Debug mode information disclosure
+
 THOROUGHNESS IS EVERYTHING:
 Your goal is 100% coverage. Miss nothing. Check everything. Be exhaustive.
 
-IMPORTANT: You must use the MCP tools directly (terminal_execute, browser_action, etc.).
-Do NOT try to spawn subagents or use Task tools - they don't have access to the sandbox tools.
-All penetration testing commands must be run through YOUR tool calls.
+PROGRESS ADVISOR SYSTEM (CRITICAL - USE THIS):
+After completing each major phase, spawn a "Progress Advisor" agent to check your progress
+and tell you what to do next. This prevents losing track during long scans.
+
+WHEN TO SPAWN ADVISOR:
+- After completing reconnaissance
+- After finishing automated scanning
+- After each vulnerability class tested
+- Whenever you're unsure what to do next
+- Every 10-15 tool calls as a checkpoint
+
+REPORT FILE: {report_path}
+All findings MUST be written to this file using write_report and create_vulnerability_report tools.
+
+HOW TO USE ADVISOR:
+Spawn a Task agent with this prompt (replace REPORT_PATH with actual path):
+
+Task(prompt='''Progress Advisor: Read the security report at {report_path} and analyze scan progress.
+
+SPECIAL INSTRUCTIONS FROM USER (CRITICAL - DO NOT IGNORE):
+{instruction if instruction else "None provided"}
+
+These instructions may contain credentials, authentication details, or specific focus areas.
+The main agent MUST continue to follow these instructions throughout the entire assessment.
+
+1. First run: cat {report_path}
+2. Compare what you see against this REQUIRED CHECKLIST:
+   [ ] Reconnaissance: Port scan, subdomain enum, content discovery
+   [ ] Technology fingerprinting: Identify frameworks, versions
+   [ ] Automated scanning: nuclei, nikto, vulnerability scanners
+   [ ] SQL Injection: Test ALL forms and parameters with sqlmap
+   [ ] XSS: Test ALL inputs for reflected/stored XSS
+   [ ] Authentication: Test login, password reset, session handling (USE PROVIDED CREDENTIALS IF ANY)
+   [ ] Authorization: Test IDOR, privilege escalation
+   [ ] SSRF: Test URL parameters for internal access
+   [ ] File Upload: Test upload functionality if present
+   [ ] Business Logic: Test workflows, race conditions
+   [ ] API Testing: Test all API endpoints
+   [ ] Exploitation: Create PoCs for confirmed vulns
+
+3. Return SPECIFIC next actions in this format:
+   COMPLETED: [list what has been done]
+   GAPS: [list what is missing]
+   SPECIAL INSTRUCTIONS REMINDER: [remind about any credentials or focus areas from user instructions]
+   NEXT ACTIONS: [specific commands/tests to run next]
+   PRIORITY: [most critical thing to do right now]
+''', subagent_type="Bash")
+
+The advisor will read your report and return exactly what you should do next.
+ALWAYS follow the advisor's guidance - it has fresh context and can see gaps you might miss.
+
+PARALLEL SUBAGENTS (for additional coverage):
+Subagents can call sandbox tools using the helper script at /tmp/strix-tool:
+
+Usage: /tmp/strix-tool <tool_name> '<json_args>'
+
+Example - subagent runs nmap:
+  /tmp/strix-tool terminal_execute '{{"command": "nmap -p- target.com"}}'
+
+Example - subagent runs sqlmap:
+  /tmp/strix-tool terminal_execute '{{"command": "sqlmap -u http://target/login --forms --batch"}}'
+
+WHEN TO USE PARALLEL AGENTS:
+- Spawn separate agents for each vulnerability class (SQLi, XSS, SSRF, etc.)
+- Run reconnaissance tasks in parallel
+- Each agent should focus on ONE thing and do it thoroughly
+
+FOR DIRECT TOOL ACCESS: Use MCP tools directly (terminal_execute, browser_action, etc.)
+FOR PARALLEL WORK: Use Task tool with /tmp/strix-tool helper script
 
 ACCURACY RULES:
 1. VERIFY every finding before reporting - no false positives
@@ -211,6 +357,20 @@ WORKSPACE:
 - Local code targets are copied to /workspace/<name>
 - Terminal tools are available (Kali Linux environment)
 - Browser uses Caido proxy for interception
+
+=== CRITICAL REMINDER (READ THIS AFTER EVERY PHASE) ===
+DO NOT STOP EARLY. DO NOT GIVE UP. A pentest is NOT complete until:
+1. ALL vulnerability classes have been tested (SQLi, XSS, SSRF, Auth, IDOR, etc.)
+2. ALL endpoints have been enumerated and tested
+3. ALL findings have PoCs and are documented
+4. You have followed ALL custom instructions (credentials, focus areas, etc.)
+
+After EVERY major phase, spawn the Progress Advisor agent to check your progress.
+If you're unsure what to do, spawn the advisor. If context feels lost, spawn the advisor.
+The advisor has fresh context and will tell you exactly what to do next.
+The advisor will also REMIND you of any special instructions (credentials, focus areas).
+
+NEVER call finish_scan until the advisor confirms all checklist items are complete.
 """
 
     # Check if there's local code (whitebox testing)
@@ -614,7 +774,7 @@ def main(
         ) as progress:
             task = progress.add_task("Starting Docker sandbox...", total=None)
 
-            sandbox = Sandbox(image=image)
+            sandbox = Sandbox(image=image, scan_id=scan_id)
 
             # Register cleanup
             if not keep_container:
@@ -643,9 +803,35 @@ def main(
         mcp_config_path = Path(temp_config_dir) / "mcp.json"
         mcp_config_path.write_text(json.dumps(mcp_config, indent=2))
 
+        # Write tool server credentials for parallel subagents
+        # This allows subagents to call the tool server directly via curl
+        creds_file = Path("/tmp/strix-tool-server.env")
+        creds_file.write_text(f"""STRIX_TOOL_URL={sandbox_info["tool_server_url"]}
+STRIX_TOOL_TOKEN={sandbox_info["tool_server_token"]}
+""")
+        creds_file.chmod(0o600)
+
+        # Create helper script for subagents to call tools
+        helper_script = Path("/tmp/strix-tool")
+        helper_script.write_text(f'''#!/bin/bash
+# Helper script for parallel subagents to call Strix tools
+# Usage: strix-tool <tool_name> '<json_args>'
+# Example: strix-tool terminal_execute '{{"command": "nmap -p- target.com"}}'
+
+TOOL_NAME="$1"
+TOOL_ARGS="$2"
+
+curl -s -X POST "{sandbox_info["tool_server_url"]}/execute" \\
+  -H "Authorization: Bearer {sandbox_info["tool_server_token"]}" \\
+  -H "Content-Type: application/json" \\
+  -d "{{\\"tool_name\\": \\"$TOOL_NAME\\", \\"kwargs\\": $TOOL_ARGS, \\"agent_id\\": \\"subagent\\"}}" \\
+  | jq -r '.result.content // .result // .error // "No output"'
+''')
+        helper_script.chmod(0o755)
+
         # Generate system prompt with all targets
         target_info = "\n".join(target_descriptions)
-        system_prompt = get_system_prompt(target_info, scan_mode, sandbox_info["cpu_count"], instruction)
+        system_prompt = get_system_prompt(target_info, scan_mode, sandbox_info["cpu_count"], instruction, output_file)
 
         console.print("\n[bold]Starting Claude CLI...[/bold]\n")
         console.print("=" * 60)

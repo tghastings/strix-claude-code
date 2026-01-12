@@ -174,7 +174,7 @@ def attach_scan(scan_id: str) -> bool:
 
 def stop_docker_container(scan_id: str) -> bool:
     """Stop and remove Docker container for a scan."""
-    container_name = f"strix-cli-scan-{scan_id}"
+    container_name = f"strix-cli-{scan_id}"
 
     # Check if container exists
     result = subprocess.run(
