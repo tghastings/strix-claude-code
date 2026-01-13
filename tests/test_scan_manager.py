@@ -193,17 +193,18 @@ class TestStartScan:
         scans_dir.mkdir()
 
         with patch.object(scan_manager, "SCANS_DIR", scans_dir):
-            with patch("subprocess.run") as mock_run:
-                with patch("secrets.token_hex", return_value="deadbeef"):
-                    result = scan_manager.start_scan(
-                        targets=["example.com"],
-                        scan_mode="quick",
-                    )
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run") as mock_run:
+                    with patch("secrets.token_hex", return_value="deadbeef"):
+                        result = scan_manager.start_scan(
+                            targets=["example.com"],
+                            scan_mode="quick",
+                        )
 
-                    assert result["scan_id"] == "deadbeef"
-                    assert result["targets"] == ["example.com"]
-                    assert result["scan_mode"] == "quick"
-                    assert (scans_dir / "deadbeef.json").exists()
+                        assert result["scan_id"] == "deadbeef"
+                        assert result["targets"] == ["example.com"]
+                        assert result["scan_mode"] == "quick"
+                        assert (scans_dir / "deadbeef.json").exists()
 
     def test_starts_screen_session(self, tmp_path):
         """Should start a detached screen session."""
@@ -211,15 +212,16 @@ class TestStartScan:
         scans_dir.mkdir()
 
         with patch.object(scan_manager, "SCANS_DIR", scans_dir):
-            with patch("subprocess.run") as mock_run:
-                with patch("secrets.token_hex", return_value="abc12345"):
-                    scan_manager.start_scan(targets=["example.com"])
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run") as mock_run:
+                    with patch("secrets.token_hex", return_value="abc12345"):
+                        scan_manager.start_scan(targets=["example.com"])
 
-                    # Check that screen was called with correct args
-                    calls = mock_run.call_args_list
-                    screen_call = [c for c in calls if c[0][0][0] == "screen"][0]
-                    assert "-dmS" in screen_call[0][0]
-                    assert "strix-abc12345" in screen_call[0][0]
+                        # Check that screen was called with correct args
+                        calls = mock_run.call_args_list
+                        screen_call = [c for c in calls if c[0][0][0] == "screen"][0]
+                        assert "-dmS" in screen_call[0][0]
+                        assert "strix-abc12345" in screen_call[0][0]
 
     def test_creates_run_script(self, tmp_path):
         """Should create executable run script."""
@@ -227,14 +229,15 @@ class TestStartScan:
         scans_dir.mkdir()
 
         with patch.object(scan_manager, "SCANS_DIR", scans_dir):
-            with patch("subprocess.run"):
-                with patch("secrets.token_hex", return_value="script123"):
-                    scan_manager.start_scan(targets=["example.com"])
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="script123"):
+                        scan_manager.start_scan(targets=["example.com"])
 
-                    script_path = scans_dir / "script123_run.sh"
-                    assert script_path.exists()
-                    # Check it's executable
-                    assert script_path.stat().st_mode & 0o111
+                        script_path = scans_dir / "script123_run.sh"
+                        assert script_path.exists()
+                        # Check it's executable
+                        assert script_path.stat().st_mode & 0o111
 
     def test_uses_custom_output_file(self, tmp_path):
         """Should use custom output file when provided."""
@@ -242,14 +245,232 @@ class TestStartScan:
         scans_dir.mkdir()
 
         with patch.object(scan_manager, "SCANS_DIR", scans_dir):
-            with patch("subprocess.run"):
-                with patch("secrets.token_hex", return_value="custom"):
-                    result = scan_manager.start_scan(
-                        targets=["example.com"],
-                        output_file="/custom/path/report.md",
-                    )
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="custom"):
+                        result = scan_manager.start_scan(
+                            targets=["example.com"],
+                            output_file="/custom/path/report.md",
+                        )
 
-                    assert result["output_file"] == "/custom/path/report.md"
+                        assert result["output_file"] == "/custom/path/report.md"
+
+    def test_uses_sys_executable_for_command(self, tmp_path):
+        """Should use sys.executable with module invocation instead of run.py."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        import sys
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="sysexec"):
+                        scan_manager.start_scan(
+                            targets=["example.com"],
+                            scan_mode="deep",
+                        )
+
+                        # Check the run script contains sys.executable and module invocation
+                        run_script = scans_dir / "sysexec_run.sh"
+                        assert run_script.exists()
+                        content = run_script.read_text()
+
+                        # Should use the current Python interpreter
+                        assert sys.executable in content
+                        # Should use module invocation
+                        assert "-m" in content
+                        assert "strix_cli_claude.main" in content
+                        # Should NOT reference run.py
+                        assert "run.py" not in content
+
+    def test_run_script_contains_all_arguments(self, tmp_path):
+        """Should include all scan arguments in the run script."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="argstest"):
+                        scan_manager.start_scan(
+                            targets=["example.com", "test.local"],
+                            scan_mode="standard",
+                            instruction="Focus on XSS",
+                            output_file="/tmp/report.md",
+                        )
+
+                        run_script = scans_dir / "argstest_run.sh"
+                        content = run_script.read_text()
+
+                        # Check all arguments are present
+                        assert "-m standard" in content or "-m 'standard'" in content
+                        assert "-t example.com" in content or "-t 'example.com'" in content
+                        assert "-t test.local" in content or "-t 'test.local'" in content
+                        assert "-o /tmp/report.md" in content or "-o '/tmp/report.md'" in content
+                        assert "--instruction" in content
+                        assert "Focus on XSS" in content
+                        assert "--scan-id argstest" in content or "--scan-id 'argstest'" in content
+
+
+class TestScreenrcConfiguration:
+    """Tests for screenrc configuration and terminal UX."""
+
+    def test_screenrc_passes_through_term(self, tmp_path):
+        """Should pass through terminal type from environment."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                assert "term $TERM" in content
+
+    def test_screenrc_has_large_scrollback(self, tmp_path):
+        """Should configure large scrollback buffer for scrolling."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                # Should have at least 10k lines of scrollback
+                assert "defscrollback" in content
+                # Extract the scrollback value
+                for line in content.split("\n"):
+                    if "defscrollback" in line:
+                        value = int(line.split()[-1])
+                        assert value >= 10000, f"Scrollback {value} is too small"
+
+    def test_screenrc_disables_alternate_screen(self, tmp_path):
+        """Should disable alternate screen to allow terminal native scrollback."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                assert "altscreen off" in content
+
+    def test_screenrc_has_utf8_support(self, tmp_path):
+        """Should enable UTF-8 for proper character rendering."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                assert "defutf8 on" in content
+
+    def test_screenrc_disables_status_line(self, tmp_path):
+        """Should disable status line to keep terminal clean."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                # Status line disabled for clean display
+                assert "hardstatus off" in content
+
+    def test_screenrc_enables_terminal_scrollback(self, tmp_path):
+        """Should configure termcapinfo to allow terminal native scrollback."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+        screenrc = scans_dir / "strix.screenrc"
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", screenrc):
+                scan_manager.ensure_screenrc()
+
+                content = screenrc.read_text()
+                # ti@:te@ disables alternate screen sequences for native scrollback
+                assert "termcapinfo xterm* ti@:te@" in content
+
+    def test_run_script_does_not_override_term(self, tmp_path):
+        """Should NOT override TERM - let terminal pass through naturally."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="termtest"):
+                        scan_manager.start_scan(targets=["example.com"])
+
+                        run_script = scans_dir / "termtest_run.sh"
+                        content = run_script.read_text()
+
+                        # Should NOT override TERM
+                        assert "export TERM=" not in content
+
+    def test_run_script_sets_locale_for_unicode(self, tmp_path):
+        """Should set locale environment for proper Unicode rendering."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="localetest"):
+                        scan_manager.start_scan(targets=["example.com"])
+
+                        run_script = scans_dir / "localetest_run.sh"
+                        content = run_script.read_text()
+
+                        assert "LANG=" in content
+
+    def test_screen_command_uses_native_logging(self, tmp_path):
+        """Should use screen's -L flag instead of script command for logging."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run") as mock_run:
+                    with patch("secrets.token_hex", return_value="logtest"):
+                        scan_manager.start_scan(targets=["example.com"])
+
+                        # Verify screen was called with -L flag
+                        calls = mock_run.call_args_list
+                        screen_call = [c for c in calls if c[0][0][0] == "screen"][0]
+                        screen_args = screen_call[0][0]
+
+                        assert "-L" in screen_args, "Screen should use -L for native logging"
+                        assert "-Logfile" in screen_args, "Screen should specify log file"
+
+    def test_no_script_command_in_run_script(self, tmp_path):
+        """Should NOT use 'script' command which corrupts terminal display."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="noscript"):
+                        scan_manager.start_scan(targets=["example.com"])
+
+                        run_script = scans_dir / "noscript_run.sh"
+                        content = run_script.read_text()
+
+                        # The script command corrupts terminal display
+                        assert "script -q" not in content
+                        assert "script -f" not in content
 
 
 class TestAttachScan:
@@ -261,14 +482,15 @@ class TestAttachScan:
             result = scan_manager.attach_scan("notrunning")
             assert result is False
 
-    def test_attaches_to_screen_session(self):
+    def test_attaches_to_screen_session(self, tmp_path):
         """Should attach to screen session when running."""
         with patch.object(scan_manager, "is_screen_running", return_value=True):
             with patch("subprocess.run") as mock_run:
                 result = scan_manager.attach_scan("running123")
 
                 assert result is True
-                mock_run.assert_called_with(["screen", "-r", "strix-running123"])
+                # Should use -x for multi-attach
+                mock_run.assert_called_with(["screen", "-x", "strix-running123"])
 
 
 class TestStopDockerContainer:

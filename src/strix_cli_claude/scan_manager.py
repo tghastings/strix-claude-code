@@ -5,12 +5,60 @@ import os
 import shlex
 import subprocess
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 # Scan data directory
 SCANS_DIR = Path.home() / ".strix-cli" / "scans"
+SCREENRC_FILE = SCANS_DIR / "strix.screenrc"
+
+
+def ensure_screenrc():
+    """Create an optimized screenrc for strix sessions."""
+    ensure_dirs()
+
+    screenrc_content = """\
+# Strix Claude Code - Screen Configuration
+# Minimal config for clean Claude CLI terminal experience
+
+# Terminal - pass through terminal type from environment
+term $TERM
+
+# Large scrollback buffer (50k lines)
+defscrollback 50000
+
+# Disable alternate screen - allows terminal native scrollback
+altscreen off
+
+# UTF-8 support
+defutf8 on
+
+# Disable startup message
+startup_message off
+
+# Disable visual bell
+vbell off
+
+# No status line - keep terminal clean
+hardstatus off
+
+# Don't block when a window's output stops
+nonblock on
+
+# Auto-detach on hangup
+autodetach on
+
+# Faster command sequences
+maptimeout 5
+
+# Allow terminal scrollback to work
+termcapinfo xterm* ti@:te@
+"""
+
+    if not SCREENRC_FILE.exists() or SCREENRC_FILE.read_text() != screenrc_content:
+        SCREENRC_FILE.write_text(screenrc_content)
 
 
 def ensure_dirs():
@@ -83,21 +131,18 @@ def start_scan(
     import secrets
 
     ensure_dirs()
+    ensure_screenrc()
 
     # Generate scan ID
     scan_id = secrets.token_hex(4)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Default output file
     if not output_file:
         output_file = str(Path.home() / f"strix_report_{scan_id}.md")
 
-    # Build the command
-    strix_cli_dir = Path(__file__).parent.parent.parent
-    run_script = strix_cli_dir / "run.py"
-
+    # Build the command using the same Python interpreter with module invocation
     cmd_parts = [
-        "python3", str(run_script),
+        sys.executable, "-m", "strix_cli_claude.main",
         "-m", scan_mode,
         "-o", output_file,
         "--scan-id", scan_id,
@@ -110,39 +155,41 @@ def start_scan(
         cmd_parts.extend(["--instruction", instruction])
 
     # Create a wrapper script for the screen session
+    # No longer using 'script' command - it corrupts terminal display
+    # Screen's native logging (-L) provides clean log capture
     scan_script = SCANS_DIR / f"{scan_id}_run.sh"
-    inner_script = SCANS_DIR / f"{scan_id}_cmd.sh"
     log_file = SCANS_DIR / f"{scan_id}.log"
 
-    # Use 'script' command to capture output while preserving TTY interactivity
-    # This is critical for Claude CLI which requires a proper terminal
     # SECURITY: Use shlex.quote() to prevent command injection from user inputs
-    # Write command to inner script to avoid complex quoting issues with script -c
     quoted_parts = " ".join(shlex.quote(part) for part in cmd_parts)
-    quoted_dir = shlex.quote(str(strix_cli_dir))
-    quoted_log = shlex.quote(str(log_file))
-    quoted_inner = shlex.quote(str(inner_script))
 
-    # Inner script runs the actual command
-    # Set TERM to xterm-256color for proper Claude CLI rendering in screen
-    inner_script.write_text(f'''#!/bin/bash
-export TERM=xterm-256color
-export COLORTERM=truecolor
-cd {quoted_dir}
-exec {quoted_parts}
-''')
-    inner_script.chmod(0o755)
-
-    # Outer script uses 'script' to capture TTY output
-    # Use -f to flush output and set TERM for proper rendering
+    # Simple wrapper script - no script command, just run directly
+    # Don't override TERM - let the terminal pass through naturally
     scan_script.write_text(f'''#!/bin/bash
-export TERM=xterm-256color
-export COLORTERM=truecolor
-# Use script with flush (-f) for better real-time logging
-script -q -f {quoted_log} -c {quoted_inner}
+# Strix scan wrapper
+export LANG=en_US.UTF-8
+
+# Show keyboard shortcuts
 echo ""
-echo "=== SCAN COMPLETED ==="
-echo "Press Enter to close this session..."
+echo "┌───────────────────────────────────────────────────────────┐"
+echo "│  STRIX SCAN                                               │"
+echo "├───────────────────────────────────────────────────────────┤"
+echo "│  Scroll with your terminal (mouse wheel / trackpad)       │"
+echo "│  Ctrl+A, D  =  Detach (scan continues in background)      │"
+echo "└───────────────────────────────────────────────────────────┘"
+echo ""
+
+# Run the scan
+{quoted_parts}
+exit_code=$?
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "  SCAN COMPLETED (exit code: $exit_code)"
+echo "  Report: {shlex.quote(output_file)}"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "Press Enter to close, or Ctrl+A,D to detach..."
 read
 ''')
     scan_script.chmod(0o755)
@@ -160,11 +207,16 @@ read
     }
     save_scan_metadata(scan_id, metadata)
 
-    # Start screen session with proper terminal settings
-    # -T sets terminal type, helps with Claude CLI rendering
+    # Start screen session with:
+    # -c: use our optimized screenrc
+    # -dmS: detached mode with session name
+    # -L: enable logging
+    # -Logfile: specify log file location
     subprocess.run([
-        "screen", "-dmS", f"strix-{scan_id}",
-        "-T", "xterm-256color",
+        "screen",
+        "-c", str(SCREENRC_FILE),
+        "-dmS", f"strix-{scan_id}",
+        "-L", "-Logfile", str(log_file),
         "bash", str(scan_script),
     ])
 
@@ -172,12 +224,28 @@ read
     return metadata
 
 
-def attach_scan(scan_id: str) -> bool:
-    """Attach to a running scan's screen session."""
+def attach_scan(scan_id: str, interactive: bool = True) -> bool:
+    """Attach to a running scan's screen session.
+
+    Args:
+        scan_id: The scan ID to attach to
+        interactive: If True, attach to screen session directly.
+                    If False, tail the log file (better scrolling).
+    """
     if not is_screen_running(scan_id):
         return False
 
-    subprocess.run(["screen", "-r", f"strix-{scan_id}"])
+    if interactive:
+        # Direct screen attach - allows interaction but scroll is Ctrl+A,[
+        subprocess.run(["screen", "-x", f"strix-{scan_id}"])
+    else:
+        # Tail the log - normal terminal scrolling works, Ctrl+C to stop watching
+        metadata = load_scan_metadata(scan_id)
+        if metadata and metadata.get("log_file"):
+            log_file = metadata["log_file"]
+            print(f"\n  Watching log: {log_file}")
+            print("  (Ctrl+C to stop watching - scan continues in background)\n")
+            subprocess.run(["tail", "-f", log_file])
     return True
 
 
