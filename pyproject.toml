@@ -1,6 +1,6 @@
 [project]
 name = "strix-claude-code"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI-powered penetration testing using Claude CLI"
 authors = [{name = "Strix Claude Code"}]
 readme = "README.md"

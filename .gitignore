@@ -13,6 +13,7 @@ eggs/
 lib/
 lib64/
 parts/
+pentest/
 sdist/
 var/
 wheels/

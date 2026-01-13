@@ -124,15 +124,22 @@ def start_scan(
     quoted_inner = shlex.quote(str(inner_script))
 
     # Inner script runs the actual command
+    # Set TERM to xterm-256color for proper Claude CLI rendering in screen
     inner_script.write_text(f'''#!/bin/bash
+export TERM=xterm-256color
+export COLORTERM=truecolor
 cd {quoted_dir}
 exec {quoted_parts}
 ''')
     inner_script.chmod(0o755)
 
     # Outer script uses 'script' to capture TTY output
+    # Use -f to flush output and set TERM for proper rendering
     scan_script.write_text(f'''#!/bin/bash
-script -q {quoted_log} -c {quoted_inner}
+export TERM=xterm-256color
+export COLORTERM=truecolor
+# Use script with flush (-f) for better real-time logging
+script -q -f {quoted_log} -c {quoted_inner}
 echo ""
 echo "=== SCAN COMPLETED ==="
 echo "Press Enter to close this session..."
@@ -153,9 +160,11 @@ read
     }
     save_scan_metadata(scan_id, metadata)
 
-    # Start screen session
+    # Start screen session with proper terminal settings
+    # -T sets terminal type, helps with Claude CLI rendering
     subprocess.run([
         "screen", "-dmS", f"strix-{scan_id}",
+        "-T", "xterm-256color",
         "bash", str(scan_script),
     ])
 

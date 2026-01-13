@@ -136,6 +136,7 @@ class Sandbox:
         self._container = self.client.containers.run(
             self.image,
             command="sleep infinity",
+            entrypoint="",  # Override image entrypoint to prevent auto-initialization
             detach=True,
             name=container_name,
             hostname=container_name,
