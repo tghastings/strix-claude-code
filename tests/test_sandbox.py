@@ -705,3 +705,250 @@ class TestContainerConfiguration:
 
                         call_kwargs = mock_client.containers.run.call_args[1]
                         assert call_kwargs.get("command") == "sleep infinity"
+
+
+class TestDockerSocketMounting:
+    """Tests for Docker socket mounting feature."""
+
+    def test_mount_docker_socket_defaults_to_false(self):
+        """Should default mount_docker_socket to False."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+            assert sb.mount_docker_socket is False
+
+    def test_mount_docker_socket_can_be_enabled(self):
+        """Should accept mount_docker_socket parameter."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            assert sb.mount_docker_socket is True
+
+    def test_mount_docker_socket_via_env_var(self):
+        """Should enable mount_docker_socket via STRIX_MOUNT_DOCKER env var."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            with patch.dict("os.environ", {"STRIX_MOUNT_DOCKER": "true"}):
+                sb = Sandbox()
+                assert sb.mount_docker_socket is True
+
+    def test_mount_docker_socket_env_var_case_insensitive(self):
+        """Should accept various truthy values for STRIX_MOUNT_DOCKER."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+
+            for value in ["1", "TRUE", "True", "yes", "YES"]:
+                with patch.dict("os.environ", {"STRIX_MOUNT_DOCKER": value}):
+                    sb = Sandbox()
+                    assert sb.mount_docker_socket is True, f"Failed for value: {value}"
+
+    def test_docker_socket_mounted_when_enabled(self, tmp_path):
+        """Should mount Docker socket when mount_docker_socket=True."""
+        # Create a fake docker socket
+        docker_sock = tmp_path / "docker.sock"
+        docker_sock.touch()
+
+        with patch("docker.from_env") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_container = MagicMock()
+            mock_container.id = "container123"
+            mock_client.containers.run.return_value = mock_container
+            mock_client.containers.get.side_effect = NotFound("Not found")
+
+            with patch.object(Sandbox, "ensure_image"):
+                with patch.object(Sandbox, "_initialize_container"):
+                    with patch.object(Sandbox, "_find_available_port", return_value=8080):
+                        with patch.object(Path, "exists", return_value=True):
+                            sb = Sandbox(mount_docker_socket=True)
+                            sb.start()
+
+                            call_kwargs = mock_client.containers.run.call_args[1]
+                            volumes = call_kwargs.get("volumes", {})
+                            assert "/var/run/docker.sock" in volumes
+                            assert volumes["/var/run/docker.sock"]["bind"] == "/var/run/docker.sock"
+                            assert volumes["/var/run/docker.sock"]["mode"] == "rw"
+
+    def test_docker_socket_not_mounted_when_disabled(self):
+        """Should NOT mount Docker socket when mount_docker_socket=False."""
+        with patch("docker.from_env") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_container = MagicMock()
+            mock_container.id = "container123"
+            mock_client.containers.run.return_value = mock_container
+            mock_client.containers.get.side_effect = NotFound("Not found")
+
+            with patch.object(Sandbox, "ensure_image"):
+                with patch.object(Sandbox, "_initialize_container"):
+                    with patch.object(Sandbox, "_find_available_port", return_value=8080):
+                        sb = Sandbox(mount_docker_socket=False)
+                        sb.start()
+
+                        call_kwargs = mock_client.containers.run.call_args[1]
+                        volumes = call_kwargs.get("volumes")
+                        # volumes should be None or empty when not mounting
+                        assert volumes is None or "/var/run/docker.sock" not in volumes
+
+    def test_docker_host_env_set_when_socket_mounted(self):
+        """Should set DOCKER_HOST env var when socket is mounted."""
+        with patch("docker.from_env") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_container = MagicMock()
+            mock_container.id = "container123"
+            mock_client.containers.run.return_value = mock_container
+            mock_client.containers.get.side_effect = NotFound("Not found")
+
+            with patch.object(Sandbox, "ensure_image"):
+                with patch.object(Sandbox, "_initialize_container"):
+                    with patch.object(Sandbox, "_find_available_port", return_value=8080):
+                        with patch.object(Path, "exists", return_value=True):
+                            sb = Sandbox(mount_docker_socket=True)
+                            sb.start()
+
+                            call_kwargs = mock_client.containers.run.call_args[1]
+                            env = call_kwargs.get("environment", {})
+                            assert env["DOCKER_HOST"] == "unix:///var/run/docker.sock"
+
+    def test_docker_host_env_empty_when_socket_not_mounted(self):
+        """Should set DOCKER_HOST to empty string when socket not mounted."""
+        with patch("docker.from_env") as mock_docker:
+            mock_client = MagicMock()
+            mock_docker.return_value = mock_client
+            mock_container = MagicMock()
+            mock_container.id = "container123"
+            mock_client.containers.run.return_value = mock_container
+            mock_client.containers.get.side_effect = NotFound("Not found")
+
+            with patch.object(Sandbox, "ensure_image"):
+                with patch.object(Sandbox, "_initialize_container"):
+                    with patch.object(Sandbox, "_find_available_port", return_value=8080):
+                        sb = Sandbox(mount_docker_socket=False)
+                        sb.start()
+
+                        call_kwargs = mock_client.containers.run.call_args[1]
+                        env = call_kwargs.get("environment", {})
+                        assert env["DOCKER_HOST"] == ""
+
+
+class TestSetupDockerAccess:
+    """Tests for _setup_docker_access method."""
+
+    def test_does_nothing_without_container(self):
+        """Should do nothing when container is None."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            sb._container = None
+
+            # Should not raise
+            sb._setup_docker_access()
+
+    def test_fixes_docker_socket_permissions(self):
+        """Should chmod 666 the Docker socket."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+            # Mock which docker returns success (already installed)
+            mock_container.exec_run.return_value = MagicMock(exit_code=0, output=b"/usr/local/bin/docker")
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            # Check chmod was called
+            calls = mock_container.exec_run.call_args_list
+            chmod_calls = [c for c in calls if "chmod 666" in str(c)]
+            assert len(chmod_calls) > 0, "chmod 666 should be called on docker.sock"
+
+    def test_installs_docker_cli_when_missing(self):
+        """Should install Docker CLI if not present."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+
+            # Mock sequence: chmod succeeds, 'which docker' fails (not installed),
+            # install succeeds, 'which trivy' succeeds, 'docker ps' succeeds
+            mock_container.exec_run.side_effect = [
+                MagicMock(exit_code=0, output=b""),  # chmod
+                MagicMock(exit_code=1, output=b""),  # which docker - not found
+                MagicMock(exit_code=0, output=b""),  # install docker
+                MagicMock(exit_code=0, output=b"/usr/local/bin/trivy"),  # which trivy
+                MagicMock(exit_code=0, output=b""),  # docker ps verify
+            ]
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            # Verify install command was called
+            calls = mock_container.exec_run.call_args_list
+            install_calls = [c for c in calls if "docker-24.0.7.tgz" in str(c)]
+            assert len(install_calls) > 0, "Docker CLI install should be attempted"
+
+    def test_skips_docker_install_when_present(self):
+        """Should skip Docker CLI install if already present."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+
+            # Mock sequence: chmod succeeds, 'which docker' succeeds (already installed),
+            # 'which trivy' succeeds, 'docker ps' succeeds
+            mock_container.exec_run.side_effect = [
+                MagicMock(exit_code=0, output=b""),  # chmod
+                MagicMock(exit_code=0, output=b"/usr/local/bin/docker"),  # which docker - found
+                MagicMock(exit_code=0, output=b"/usr/local/bin/trivy"),  # which trivy
+                MagicMock(exit_code=0, output=b""),  # docker ps verify
+            ]
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            # Verify install command was NOT called
+            calls = mock_container.exec_run.call_args_list
+            install_calls = [c for c in calls if "docker-24.0.7.tgz" in str(c)]
+            assert len(install_calls) == 0, "Docker CLI install should be skipped when already present"
+
+    def test_installs_trivy_when_missing(self):
+        """Should install trivy if not present."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+
+            # Mock sequence: chmod succeeds, 'which docker' succeeds,
+            # 'which trivy' fails (not installed), trivy install succeeds, 'docker ps' succeeds
+            mock_container.exec_run.side_effect = [
+                MagicMock(exit_code=0, output=b""),  # chmod
+                MagicMock(exit_code=0, output=b"/usr/local/bin/docker"),  # which docker
+                MagicMock(exit_code=1, output=b""),  # which trivy - not found
+                MagicMock(exit_code=0, output=b""),  # install trivy
+                MagicMock(exit_code=0, output=b""),  # docker ps verify
+            ]
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            # Verify trivy install command was called
+            calls = mock_container.exec_run.call_args_list
+            install_calls = [c for c in calls if "aquasecurity/trivy" in str(c)]
+            assert len(install_calls) > 0, "Trivy install should be attempted"
+
+    def test_verifies_docker_connectivity(self):
+        """Should run docker ps to verify connectivity."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+
+            mock_container.exec_run.return_value = MagicMock(exit_code=0, output=b"")
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            # Verify docker ps was called
+            calls = mock_container.exec_run.call_args_list
+            docker_ps_calls = [c for c in calls if c[0][0] == "docker ps"]
+            assert len(docker_ps_calls) > 0, "docker ps should be called to verify connectivity"

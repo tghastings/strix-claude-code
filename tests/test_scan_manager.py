@@ -473,6 +473,83 @@ class TestScreenrcConfiguration:
                         assert "script -f" not in content
 
 
+class TestMountDockerOption:
+    """Tests for Docker socket mounting option."""
+
+    def test_mount_docker_flag_added_to_command(self, tmp_path):
+        """Should add --mount-docker flag when mount_docker=True."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="dockertest"):
+                        scan_manager.start_scan(
+                            targets=["example.com"],
+                            mount_docker=True,
+                        )
+
+                        run_script = scans_dir / "dockertest_run.sh"
+                        content = run_script.read_text()
+
+                        assert "--mount-docker" in content
+
+    def test_mount_docker_flag_not_added_when_false(self, tmp_path):
+        """Should NOT add --mount-docker flag when mount_docker=False."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="nodockertest"):
+                        scan_manager.start_scan(
+                            targets=["example.com"],
+                            mount_docker=False,
+                        )
+
+                        run_script = scans_dir / "nodockertest_run.sh"
+                        content = run_script.read_text()
+
+                        assert "--mount-docker" not in content
+
+    def test_mount_docker_saved_in_metadata(self, tmp_path):
+        """Should save mount_docker setting in scan metadata."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="metamount"):
+                        result = scan_manager.start_scan(
+                            targets=["example.com"],
+                            mount_docker=True,
+                        )
+
+                        assert result["mount_docker"] is True
+
+                        # Also check it's persisted in the JSON file
+                        metadata = scan_manager.load_scan_metadata("metamount")
+                        assert metadata["mount_docker"] is True
+
+    def test_mount_docker_defaults_to_false(self, tmp_path):
+        """Should default mount_docker to False."""
+        scans_dir = tmp_path / "scans"
+        scans_dir.mkdir()
+
+        with patch.object(scan_manager, "SCANS_DIR", scans_dir):
+            with patch.object(scan_manager, "SCREENRC_FILE", scans_dir / "strix.screenrc"):
+                with patch("subprocess.run"):
+                    with patch("secrets.token_hex", return_value="defaultmount"):
+                        result = scan_manager.start_scan(
+                            targets=["example.com"],
+                        )
+
+                        assert result["mount_docker"] is False
+
+
 class TestAttachScan:
     """Tests for attach_scan function."""
 

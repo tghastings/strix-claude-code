@@ -22,7 +22,7 @@ console = Console()
 logger = logging.getLogger(__name__)
 
 
-def get_system_prompt(targets: str, scan_mode: str, cpu_count: int, instruction: str | None = None, report_file: str | None = None) -> str:
+def get_system_prompt(targets: str, scan_mode: str, cpu_count: int, instruction: str | None = None, report_file: str | None = None, mount_docker: bool = False) -> str:
     """Generate the system prompt for pen testing."""
 
     # Check if multiple targets
@@ -31,6 +31,70 @@ def get_system_prompt(targets: str, scan_mode: str, cpu_count: int, instruction:
 
     # Default report file path
     report_path = report_file or "~/strix_report.md"
+
+    # Docker tools section if Docker socket is mounted
+    docker_tools = ""
+    if mount_docker:
+        docker_tools = """
+DOCKER ACCESS ENABLED:
+The Docker socket is mounted - you have FULL Docker access inside this container.
+This is Docker-outside-of-Docker (DooD) - your commands control the host's Docker daemon.
+
+FIRST: INSTALL DOCKER CLI (if not already available):
+Run this command FIRST before using Docker:
+```
+which docker || (curl -fsSL https://get.docker.com | sh)
+```
+This checks if Docker CLI exists, and installs it if not.
+
+DOCKER COMMANDS AVAILABLE:
+- docker ps: List running containers
+- docker images: List available images
+- docker inspect <container/image>: Get detailed metadata
+- docker logs <container>: View container logs
+- docker exec <container> <cmd>: Execute commands in running containers
+- docker history <image>: Show image layer history
+- docker cp <container>:<path> <local>: Copy files from containers
+
+CONTAINER/IMAGE SECURITY TOOLS:
+First install trivy if needed:
+```
+which trivy || (curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin)
+```
+
+- trivy image <image>: Scan container images for vulnerabilities
+- trivy fs /path: Scan filesystem for vulnerabilities
+- docker inspect <container>: Check container configuration
+- docker history --no-trunc <image>: Show layers (look for secrets!)
+
+WHAT TO LOOK FOR:
+1. Vulnerable base images (outdated OS, known CVEs)
+2. Secrets in image layers (API keys, passwords, certs)
+3. Overly permissive configurations (root user, capabilities)
+4. Exposed ports and services
+5. Sensitive files copied into images
+6. Package vulnerabilities in dependencies
+7. Hardcoded credentials in environment variables
+8. Misconfigured entrypoints/commands
+
+ATTACK VECTORS:
+- Container escape via kernel exploits
+- Privilege escalation via capabilities
+- Secrets extraction from layers
+- Network pivoting between containers
+- Volume mount abuse
+- Docker socket exposure (you have it!)
+
+Example workflow:
+1. which docker || (curl -fsSL https://get.docker.com | sh)  # Ensure docker CLI
+2. docker ps -a  # List all containers
+3. docker images  # List all images
+4. which trivy || (curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin)  # Install trivy
+5. trivy image <target-image>  # Scan for vulns
+6. docker inspect <container>  # Check config
+7. docker history --no-trunc <image>  # Find secrets in layers
+
+"""
 
     base_prompt = f"""You are Strix, an elite offensive security operator. You think like a malicious hacker - cunning, creative, relentless, and obsessed with finding ways in.
 
@@ -148,7 +212,7 @@ TOOLS AVAILABLE:
 - str_replace_editor / list_files: View and edit files in /workspace
 - create_vulnerability_report: Document vulnerabilities with CVSS scoring (USE FOR ALL CONFIRMED VULNS)
 - write_report: Add general findings/notes to the report
-
+{docker_tools}
 METHODOLOGY:
 1. RECONNAISSANCE: Map the entire attack surface first
    - Subdomain enumeration, port scanning, content discovery
@@ -647,6 +711,7 @@ def classify_target(target: str) -> dict[str, str]:
 @click.option("--instruction-file", type=click.Path(exists=True), help="File containing custom instructions")
 @click.option("-o", "--output", "output_file", help="Output file for vulnerability report (markdown)")
 @click.option("--image", help="Custom Docker sandbox image")
+@click.option("--mount-docker", is_flag=True, help="Mount Docker socket for container scanning (trivy, docker inspect, etc.)")
 @click.option("--keep-container", is_flag=True, help="Keep container running after scan")
 @click.option("--scan-id", help="Scan ID (used by TUI for tracking)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output")
@@ -657,6 +722,7 @@ def main(
     instruction_file: str | None,
     output_file: str | None,
     image: str | None,
+    mount_docker: bool,
     keep_container: bool,
     scan_id: str | None,
     verbose: bool,
@@ -774,7 +840,7 @@ def main(
         ) as progress:
             task = progress.add_task("Starting Docker sandbox...", total=None)
 
-            sandbox = Sandbox(image=image, scan_id=scan_id)
+            sandbox = Sandbox(image=image, scan_id=scan_id, mount_docker_socket=mount_docker)
 
             # Register cleanup
             if not keep_container:
@@ -831,7 +897,7 @@ curl -s -X POST "{sandbox_info["tool_server_url"]}/execute" \\
 
         # Generate system prompt with all targets
         target_info = "\n".join(target_descriptions)
-        system_prompt = get_system_prompt(target_info, scan_mode, sandbox_info["cpu_count"], instruction, output_file)
+        system_prompt = get_system_prompt(target_info, scan_mode, sandbox_info["cpu_count"], instruction, output_file, mount_docker)
 
         console.print("\n[bold]Starting Claude CLI...[/bold]\n")
         console.print("=" * 60)

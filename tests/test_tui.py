@@ -281,7 +281,7 @@ class TestNewScanWizard:
                                     "/path/to/output.md",  # Output file
                                     "",  # Press enter after starting
                                 ]
-                                mock_confirm.ask.side_effect = [True, False]  # Start: yes, Attach: no
+                                mock_confirm.ask.side_effect = [False, True, False]  # Docker: no, Start: yes, Attach: no
                                 mock_manager.start_scan.return_value = {
                                     "scan_id": "new123",
                                     "screen_name": "strix-new123",

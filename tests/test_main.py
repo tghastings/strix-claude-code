@@ -588,6 +588,93 @@ class TestParallelSubagentSupport:
                     assert "STRIX_TOOL_TOKEN" in content
 
 
+class TestDockerSystemPrompt:
+    """Tests for Docker-related system prompt functionality."""
+
+    def test_no_docker_instructions_by_default(self):
+        """Should not include Docker instructions when mount_docker is False."""
+        result = main.get_system_prompt("URL: https://example.com", "deep", 4)
+        assert "DOCKER ACCESS ENABLED" not in result
+        assert "docker ps" not in result
+        assert "trivy image" not in result
+
+    def test_includes_docker_instructions_when_enabled(self):
+        """Should include Docker instructions when mount_docker is True."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "DOCKER ACCESS ENABLED" in result
+
+    def test_docker_instructions_explain_dood(self):
+        """Docker instructions should explain Docker-outside-of-Docker."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "Docker socket is mounted" in result
+        assert "host's Docker daemon" in result or "DooD" in result
+
+    def test_docker_instructions_include_cli_install(self):
+        """Docker instructions should include Docker CLI install command."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "which docker" in result
+        assert "get.docker.com" in result
+
+    def test_docker_instructions_include_trivy_install(self):
+        """Docker instructions should include trivy install command."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "which trivy" in result
+        assert "aquasecurity/trivy" in result
+
+    def test_docker_instructions_include_basic_commands(self):
+        """Docker instructions should list basic Docker commands."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "docker ps" in result
+        assert "docker images" in result
+        assert "docker inspect" in result
+        assert "docker logs" in result
+        assert "docker exec" in result
+
+    def test_docker_instructions_include_security_scanning(self):
+        """Docker instructions should include container security scanning tools."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "trivy image" in result
+        assert "trivy fs" in result
+
+    def test_docker_instructions_include_attack_vectors(self):
+        """Docker instructions should list Docker-specific attack vectors."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "secrets in image layers" in result.lower() or "Secrets in image layers" in result
+        assert "privilege escalation" in result.lower() or "Privilege escalation" in result
+
+    def test_docker_instructions_include_example_workflow(self):
+        """Docker instructions should include example workflow."""
+        result = main.get_system_prompt(
+            "URL: https://example.com", "deep", 4, mount_docker=True
+        )
+        assert "Example workflow" in result
+        assert "docker history" in result
+
+    def test_docker_flag_passed_to_get_system_prompt(self):
+        """Verify mount_docker parameter works correctly."""
+        # Test with False (default)
+        result_false = main.get_system_prompt("URL: https://example.com", "deep", 4, mount_docker=False)
+        assert "DOCKER ACCESS ENABLED" not in result_false
+
+        # Test with True
+        result_true = main.get_system_prompt("URL: https://example.com", "deep", 4, mount_docker=True)
+        assert "DOCKER ACCESS ENABLED" in result_true
+
+
 class TestScanIdIntegration:
     """Tests for scan_id integration between main.py, sandbox, and scan_manager."""
 

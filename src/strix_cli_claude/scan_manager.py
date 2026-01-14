@@ -126,8 +126,17 @@ def start_scan(
     scan_mode: str = "deep",
     instruction: str | None = None,
     output_file: str | None = None,
+    mount_docker: bool = False,
 ) -> dict[str, Any]:
-    """Start a new scan in a detached screen session."""
+    """Start a new scan in a detached screen session.
+
+    Args:
+        targets: List of targets to scan
+        scan_mode: Scan intensity (quick, standard, deep)
+        instruction: Custom instructions for the scan
+        output_file: Path to save the report
+        mount_docker: Mount Docker socket for container scanning
+    """
     import secrets
 
     ensure_dirs()
@@ -153,6 +162,9 @@ def start_scan(
 
     if instruction:
         cmd_parts.extend(["--instruction", instruction])
+
+    if mount_docker:
+        cmd_parts.append("--mount-docker")
 
     # Create a wrapper script for the screen session
     # No longer using 'script' command - it corrupts terminal display
@@ -202,6 +214,7 @@ read
         "instruction": instruction,
         "output_file": output_file,
         "log_file": str(log_file),
+        "mount_docker": mount_docker,
         "started_at": datetime.now().isoformat(),
         "screen_name": f"strix-{scan_id}",
     }

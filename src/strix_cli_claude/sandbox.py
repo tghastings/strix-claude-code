@@ -41,9 +41,15 @@ class SandboxError(Exception):
 class Sandbox:
     """Manages Docker sandbox container for pen testing."""
 
-    def __init__(self, image: str | None = None, scan_id: str | None = None):
+    def __init__(
+        self,
+        image: str | None = None,
+        scan_id: str | None = None,
+        mount_docker_socket: bool = False,
+    ):
         self.image = image or os.getenv("STRIX_IMAGE", DEFAULT_SANDBOX_IMAGE)
         self.scan_id = scan_id or f"scan-{secrets.token_hex(4)}"
+        self.mount_docker_socket = mount_docker_socket or os.getenv("STRIX_MOUNT_DOCKER", "").lower() in ("1", "true", "yes")
 
         try:
             self.client = docker.from_env(timeout=DOCKER_TIMEOUT)
@@ -131,6 +137,19 @@ class Sandbox:
         logger.info(f"  CPUs available: {cpu_count}")
         logger.info(f"  Caido proxy port: {self._caido_port}")
         logger.info(f"  Tool server port: {self._tool_server_port}")
+        logger.info(f"  Docker socket mounted: {self.mount_docker_socket}")
+
+        # Build volumes list
+        volumes = {}
+        if self.mount_docker_socket:
+            # Mount Docker socket for container/image scanning capabilities
+            # This enables: docker inspect, docker images, trivy, grype, etc.
+            docker_sock = "/var/run/docker.sock"
+            if Path(docker_sock).exists():
+                volumes[docker_sock] = {"bind": docker_sock, "mode": "rw"}
+                logger.info(f"  Mounting Docker socket: {docker_sock}")
+            else:
+                logger.warning("Docker socket not found at /var/run/docker.sock")
 
         # Create and start container with all available CPUs
         self._container = self.client.containers.run(
@@ -148,6 +167,7 @@ class Sandbox:
             labels={"strix-cli-scan-id": self.scan_id},
             # Allocate all CPUs to the container
             nano_cpus=cpu_count * 1_000_000_000,  # Docker uses nano CPUs
+            volumes=volumes if volumes else None,
             environment={
                 "PYTHONUNBUFFERED": "1",
                 "CAIDO_PORT": str(self._caido_port),
@@ -159,6 +179,8 @@ class Sandbox:
                 "NMAP_THREADS": str(cpu_count * 4),  # nmap can use more threads than CPUs
                 "FFUF_THREADS": str(cpu_count * 10),  # ffuf benefits from high concurrency
                 "NUCLEI_THREADS": str(cpu_count * 5),  # nuclei template concurrency
+                # Flag for Docker access inside container
+                "DOCKER_HOST": "unix:///var/run/docker.sock" if self.mount_docker_socket else "",
             },
             extra_hosts={HOST_GATEWAY_HOSTNAME: "host-gateway"},
             tty=True,
@@ -166,6 +188,10 @@ class Sandbox:
 
         # Initialize container (start Caido proxy and tool server)
         self._initialize_container()
+
+        # Setup Docker access if socket is mounted
+        if self.mount_docker_socket:
+            self._setup_docker_access()
 
         # Copy local sources if provided
         if local_sources:
@@ -243,6 +269,75 @@ class Sandbox:
             time.sleep(min(2 ** attempt * 0.5, 5))
 
         raise SandboxError("Tool server failed to start")
+
+    def _setup_docker_access(self) -> None:
+        """Setup Docker CLI and socket permissions for container scanning."""
+        if not self._container:
+            return
+
+        logger.info("Setting up Docker access...")
+
+        # Fix Docker socket permissions so pentester user can access it
+        # The host socket is often root:docker with 660 permissions
+        self._container.exec_run(
+            "chmod 666 /var/run/docker.sock",
+            user="root",
+        )
+        logger.info("  Fixed Docker socket permissions")
+
+        # Install Docker CLI (static binary - works on any distro)
+        result = self._container.exec_run(
+            "which docker",
+            user="pentester",
+        )
+        if result.exit_code != 0:
+            logger.info("  Installing Docker CLI...")
+            install_result = self._container.exec_run(
+                "bash -c '"
+                "curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o /tmp/docker.tgz && "
+                "tar -xzf /tmp/docker.tgz -C /tmp && "
+                "mv /tmp/docker/docker /usr/local/bin/ && "
+                "rm -rf /tmp/docker /tmp/docker.tgz && "
+                "chmod +x /usr/local/bin/docker"
+                "'",
+                user="root",
+            )
+            if install_result.exit_code == 0:
+                logger.info("  Docker CLI installed successfully")
+            else:
+                logger.warning(f"  Failed to install Docker CLI: {install_result.output.decode()}")
+        else:
+            logger.info("  Docker CLI already available")
+
+        # Install trivy for container scanning
+        result = self._container.exec_run(
+            "which trivy",
+            user="pentester",
+        )
+        if result.exit_code != 0:
+            logger.info("  Installing trivy...")
+            install_result = self._container.exec_run(
+                "bash -c '"
+                "curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"
+                "'",
+                user="root",
+            )
+            if install_result.exit_code == 0:
+                logger.info("  Trivy installed successfully")
+            else:
+                logger.warning(f"  Failed to install trivy: {install_result.output.decode()}")
+        else:
+            logger.info("  Trivy already available")
+
+        # Verify Docker connectivity
+        result = self._container.exec_run(
+            "docker ps",
+            user="pentester",
+        )
+        if result.exit_code == 0:
+            logger.info("  Docker connectivity verified")
+        else:
+            logger.warning(f"  Docker connectivity test failed: {result.output.decode()}")
 
     def _copy_local_sources(self, sources: list[dict[str, str]]) -> None:
         """Copy local directories to container workspace."""

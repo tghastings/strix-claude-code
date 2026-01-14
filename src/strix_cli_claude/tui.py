@@ -645,6 +645,12 @@ def new_scan_wizard():
     ).strip() or None
     console.print()
 
+    # Docker socket mounting
+    console.print("[dim]Mount Docker socket for container/image scanning?[/dim]")
+    console.print("[dim](Enables: docker inspect, trivy, grype, etc.)[/dim]")
+    mount_docker = Confirm.ask("Mount Docker socket", default=False)
+    console.print()
+
     # Output file
     output_default = str(Path.home() / f"strix_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
     output_file = Prompt.ask("Report file", default=output_default)
@@ -668,6 +674,7 @@ def new_scan_wizard():
     mode_color = "red bold" if scan_mode == "deep" else "yellow" if scan_mode == "standard" else "dim"
     summary.add_row("Mode", f"[{mode_color}]{scan_mode.upper()}[/{mode_color}]")
     summary.add_row("Instructions", instruction or "[dim]None[/dim]")
+    summary.add_row("Docker Socket", "[green]Yes[/green]" if mount_docker else "[dim]No[/dim]")
     summary.add_row("Report", f"[cyan]{output_file}[/cyan]")
 
     console.print(Panel(
@@ -692,6 +699,7 @@ def new_scan_wizard():
             scan_mode=scan_mode,
             instruction=instruction,
             output_file=output_file,
+            mount_docker=mount_docker,
         )
 
     # Success message
