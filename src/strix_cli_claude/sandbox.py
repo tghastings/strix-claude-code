@@ -27,6 +27,9 @@ def get_cpu_count(reserve: int = 2) -> int:
 
 # Default strix sandbox image
 DEFAULT_SANDBOX_IMAGE = "ghcr.io/usestrix/strix-sandbox:0.1.11"
+# Pinned trivy release (with checksum verification at install time, see
+# _setup_docker_access) - bump deliberately, never track a moving branch.
+TRIVY_VERSION = "0.58.1"
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 TOOL_SERVER_HEALTH_RETRIES = 10
@@ -97,6 +100,18 @@ class Sandbox:
             return parsed.hostname
         return "127.0.0.1"
 
+    def _resolve_bind_host(self) -> str:
+        """Interface to publish container ports on.
+
+        Local Docker (the common case) only needs loopback - the Caido proxy
+        and the tool server (command execution, token-protected) have no
+        reason to be reachable from the LAN/internet. Only widen to all
+        interfaces when DOCKER_HOST points at a remote daemon, where the
+        published port must be reachable on that daemon's routable address.
+        """
+        docker_host = self._resolve_docker_host()
+        return "127.0.0.1" if docker_host == "127.0.0.1" else "0.0.0.0"
+
     def ensure_image(self) -> None:
         """Pull sandbox image if not available."""
         try:
@@ -133,10 +148,12 @@ class Sandbox:
         cpu_count = get_cpu_count()
         self._cpu_count = cpu_count
 
+        bind_host = self._resolve_bind_host()
+
         logger.info(f"Starting container {container_name}")
         logger.info(f"  CPUs available: {cpu_count}")
-        logger.info(f"  Caido proxy port: {self._caido_port}")
-        logger.info(f"  Tool server port: {self._tool_server_port}")
+        logger.info(f"  Caido proxy port: {self._caido_port} (bound to {bind_host})")
+        logger.info(f"  Tool server port: {self._tool_server_port} (bound to {bind_host})")
         logger.info(f"  Docker socket mounted: {self.mount_docker_socket}")
 
         # Build volumes list
@@ -160,8 +177,8 @@ class Sandbox:
             name=container_name,
             hostname=container_name,
             ports={
-                f"{self._caido_port}/tcp": self._caido_port,
-                f"{self._tool_server_port}/tcp": self._tool_server_port,
+                f"{self._caido_port}/tcp": (bind_host, self._caido_port),
+                f"{self._tool_server_port}/tcp": (bind_host, self._tool_server_port),
             },
             cap_add=["NET_ADMIN", "NET_RAW"],
             labels={"strix-cli-scan-id": self.scan_id},
@@ -315,10 +332,23 @@ class Sandbox:
             user="pentester",
         )
         if result.exit_code != 0:
-            logger.info("  Installing trivy...")
+            logger.info(f"  Installing trivy {TRIVY_VERSION}...")
+            # Pinned release + checksum verification, rather than piping the
+            # unpinned install.sh from the mutable `main` branch straight
+            # into a root shell (that script and this container's root
+            # access to /var/run/docker.sock is a full host-compromise path
+            # if the upstream branch is ever tampered with or MITM'd).
             install_result = self._container.exec_run(
                 "bash -c '"
-                "curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"
+                f"curl -fsSL -o /tmp/trivy.tgz "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz && "
+                f"curl -fsSL -o /tmp/trivy_checksums.txt "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/trivy_{TRIVY_VERSION}_checksums.txt && "
+                f"grep \" trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz\\$\" /tmp/trivy_checksums.txt | (cd /tmp && sha256sum -c -) && "
+                "tar -xzf /tmp/trivy.tgz -C /tmp trivy && "
+                "mv /tmp/trivy /usr/local/bin/trivy && "
+                "chmod +x /usr/local/bin/trivy && "
+                "rm -f /tmp/trivy.tgz /tmp/trivy_checksums.txt"
                 "'",
                 user="root",
             )

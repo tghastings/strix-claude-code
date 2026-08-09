@@ -222,6 +222,28 @@ docker pull ghcr.io/usestrix/strix-sandbox:0.1.11
 ### Tools not responding
 The tool server inside the container may need more time to start. Try running with `-v` for verbose output.
 
+## Security Considerations
+
+This tool runs Claude autonomously (`--dangerously-skip-permissions`) against real targets,
+including ones it doesn't control the content of. Keep the following in mind:
+
+- **Run it on a disposable host.** The orchestrating `claude` process runs on your machine, not
+  inside the Docker sandbox - only `terminal_execute`/`python_action`/`browser_action`/the proxy
+  tools are confined to the container. If a scanned target manages to prompt-inject the agent
+  (e.g. via page content it reads back), the agent still has its normal host-side tools available
+  to act on it. Don't run this on a machine holding credentials, source code, or data you can't
+  afford to expose, and expect it to inherit your full shell environment (`os.environ`) as-is.
+- **Don't use `--mount-docker` unless you need container/image scanning.** It mounts
+  `/var/run/docker.sock` read-write into the sandbox, which is equivalent to giving the sandbox
+  root on the Docker host. Combine this with the point above: only turn it on when the whole scan
+  is already happening on a disposable VM/CI runner.
+- **Network exposure**: the Caido proxy and tool-server ports are now published on `127.0.0.1`
+  only when using a local Docker daemon (they widen to all interfaces automatically if you point
+  `DOCKER_HOST` at a remote engine, since that's required for them to be reachable at all in that
+  setup). The tool-server is bearer-token protected regardless.
+- **Scope your target.** As with any pen testing tool, only point this at systems you're
+  authorized to test.
+
 ## Credits
 
 Based on [Strix](https://github.com/usestrix/strix) by OmniSecure Labs.
