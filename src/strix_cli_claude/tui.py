@@ -648,6 +648,8 @@ def new_scan_wizard():
     # Docker socket mounting
     console.print("[dim]Mount Docker socket for container/image scanning?[/dim]")
     console.print("[dim](Enables: docker inspect, trivy, grype, etc.)[/dim]")
+    console.print("[bold red](WARNING: gives the sandbox root-equivalent control of this Docker host -[/bold red]")
+    console.print("[bold red] only say yes on a disposable VM/CI runner)[/bold red]")
     mount_docker = Confirm.ask("Mount Docker socket", default=False)
     console.print()
 

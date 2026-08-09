@@ -40,12 +40,8 @@ DOCKER ACCESS ENABLED:
 The Docker socket is mounted - you have FULL Docker access inside this container.
 This is Docker-outside-of-Docker (DooD) - your commands control the host's Docker daemon.
 
-FIRST: INSTALL DOCKER CLI (if not already available):
-Run this command FIRST before using Docker:
-```
-which docker || (curl -fsSL https://get.docker.com | sh)
-```
-This checks if Docker CLI exists, and installs it if not.
+Docker CLI and trivy are already installed and verified (pinned release, checksum-checked)
+in this container - do NOT try to (re)install either one yourself.
 
 DOCKER COMMANDS AVAILABLE:
 - docker ps: List running containers
@@ -57,11 +53,6 @@ DOCKER COMMANDS AVAILABLE:
 - docker cp <container>:<path> <local>: Copy files from containers
 
 CONTAINER/IMAGE SECURITY TOOLS:
-First install trivy if needed:
-```
-which trivy || (curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin)
-```
-
 - trivy image <image>: Scan container images for vulnerabilities
 - trivy fs /path: Scan filesystem for vulnerabilities
 - docker inspect <container>: Check container configuration
@@ -86,13 +77,11 @@ ATTACK VECTORS:
 - Docker socket exposure (you have it!)
 
 Example workflow:
-1. which docker || (curl -fsSL https://get.docker.com | sh)  # Ensure docker CLI
-2. docker ps -a  # List all containers
-3. docker images  # List all images
-4. which trivy || (curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin)  # Install trivy
-5. trivy image <target-image>  # Scan for vulns
-6. docker inspect <container>  # Check config
-7. docker history --no-trunc <image>  # Find secrets in layers
+1. docker ps -a  # List all containers
+2. docker images  # List all images
+3. trivy image <target-image>  # Scan for vulns
+4. docker inspect <container>  # Check config
+5. docker history --no-trunc <image>  # Find secrets in layers
 
 """
 
@@ -711,7 +700,8 @@ def classify_target(target: str) -> dict[str, str]:
 @click.option("--instruction-file", type=click.Path(exists=True), help="File containing custom instructions")
 @click.option("-o", "--output", "output_file", help="Output file for vulnerability report (markdown)")
 @click.option("--image", help="Custom Docker sandbox image")
-@click.option("--mount-docker", is_flag=True, help="Mount Docker socket for container scanning (trivy, docker inspect, etc.)")
+@click.option("--mount-docker", is_flag=True, help="Mount Docker socket for container scanning (trivy, docker inspect, etc.). "
+              "WARNING: grants the sandbox root-equivalent control of the Docker host it runs on - only use on a disposable host.")
 @click.option("--keep-container", is_flag=True, help="Keep container running after scan")
 @click.option("--scan-id", help="Scan ID (used by TUI for tracking)")
 @click.option("--model", help="Claude model for the scan agent (e.g. claude-opus-5). Defaults to your configured claude CLI model.")
@@ -756,6 +746,17 @@ def main(
             title="Error",
         ))
         sys.exit(1)
+
+    if mount_docker:
+        console.print(Panel(
+            "[bold red]--mount-docker mounts /var/run/docker.sock (read-write) into the sandbox.[/bold red]\n\n"
+            "Any command the agent runs inside the sandbox - including anything an attacker-controlled\n"
+            "target manages to make it run - can then control this machine's Docker daemon directly,\n"
+            "which is equivalent to root access on the host running this scan.\n\n"
+            "Only use this on a disposable VM/CI runner you are prepared to wipe afterward.",
+            title="[bold yellow]Docker socket mount enabled[/bold yellow]",
+            border_style="red",
+        ))
 
     # Load instruction from file if provided
     if instruction_file:
@@ -925,6 +926,7 @@ exec claude \\
     --append-system-prompt "$(cat "{system_prompt_path}")" \\
     --permission-mode bypassPermissions \\
     --dangerously-skip-permissions \\
+    --disallowedTools="WebFetch,WebSearch,NotebookEdit" \\
 {model_arg}    "{wrapper_initial}"
 ''')
         wrapper_script.chmod(0o755)
@@ -1173,6 +1175,20 @@ START PHASE 1 NOW. Be THOROUGH. Miss NOTHING.
             "--append-system-prompt", system_prompt,
             "--permission-mode", "bypassPermissions",
             "--dangerously-skip-permissions",
+            # Everything the agent needs against the TARGET goes through the
+            # sandboxed MCP tools (terminal_execute/browser_action/proxy/...).
+            # Claude's own host-side WebFetch/WebSearch would hit the network
+            # directly from this machine, unsandboxed and unproxied - never
+            # needed for pen testing a target and a realistic exfil/SSRF path
+            # if a scanned target manages to prompt-inject the agent.
+            #
+            # Passed as one argv token (--flag=value), not two: --disallowedTools
+            # is declared variadic by the claude CLI, so "--disallowedTools",
+            # "value" as separate argv items lets it keep consuming whatever
+            # comes right after - including the initial prompt in the TTY path
+            # below, which then runs with an empty deny list and the prompt
+            # text swallowed as a bogus tool name instead of being sent to Claude.
+            "--disallowedTools=WebFetch,WebSearch,NotebookEdit",
         ]
         if model:
             claude_base_args += ["--model", model]
