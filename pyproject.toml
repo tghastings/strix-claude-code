@@ -9,7 +9,12 @@ dependencies = [
     "docker>=7.0.0",
     "httpx>=0.27.0",
     "jinja2>=3.1.0",
-    "mcp>=1.0.0",
+    # mcp 2.x removed the low-level decorator API (@server.list_tools /
+    # @server.call_tool) that mcp_server.py is built on; installing it makes the
+    # MCP server crash on startup with AttributeError, silently stripping every
+    # Strix tool (including write_report / create_vulnerability_report /
+    # finish_scan) from the scan agent. Pin to 1.x until mcp_server.py is ported.
+    "mcp>=1.0.0,<2",
     "click>=8.1.0",
     "rich>=13.0.0",
 ]
