@@ -25,8 +25,16 @@ def get_cpu_count(reserve: int = 2) -> int:
     available = max(1, total - reserve)  # At least 1 CPU for the sandbox
     return available
 
-# Default strix sandbox image
-DEFAULT_SANDBOX_IMAGE = "ghcr.io/usestrix/strix-sandbox:0.1.11"
+# Default strix sandbox image.
+#
+# 1.x images dropped the in-image tool server (no `strix` package, no poetry,
+# no fastapi/uvicorn) — they are driven from the host by Strix's own runtime.
+# To keep this Claude-CLI wrapper working we ship a self-contained, stdlib-only
+# tool-server shim (sandbox_tool_server.py) and copy it into the container at
+# start. `_initialize_container` auto-detects the image generation, so the old
+# 0.1.x images still work if pinned via --image / STRIX_IMAGE.
+DEFAULT_SANDBOX_IMAGE = "ghcr.io/usestrix/strix-sandbox:1.3.0"
+SHIM_FILENAME = "sandbox_tool_server.py"
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 TOOL_SERVER_HEALTH_RETRIES = 10
@@ -209,8 +217,68 @@ class Sandbox:
             "cpu_count": cpu_count,
         }
 
+    def _has_legacy_tool_server(self) -> bool:
+        """True for 0.1.x images that bake in strix.runtime.tool_server."""
+        if not self._container:
+            return False
+        try:
+            result = self._container.exec_run(
+                "test -f /app/strix/runtime/tool_server.py", user="root"
+            )
+            return result.exit_code == 0
+        except Exception:  # noqa: BLE001
+            return False
+
     def _initialize_container(self) -> None:
-        """Initialize Caido and tool server inside container."""
+        """Start the sandbox tool server (auto-detecting image generation)."""
+        if not self._container:
+            raise SandboxError("Container not started")
+
+        if self._has_legacy_tool_server():
+            self._initialize_legacy()
+        else:
+            self._initialize_shim()
+
+        host = self._resolve_docker_host()
+        self._wait_for_health(f"http://{host}:{self._tool_server_port}/health")
+
+    def _initialize_shim(self) -> None:
+        """1.x images: copy in and launch the self-contained stdlib tool server."""
+        if not self._container:
+            raise SandboxError("Container not started")
+
+        shim_path = Path(__file__).with_name(SHIM_FILENAME)
+        shim_bytes = shim_path.read_bytes()
+        logger.info("Installing compatibility tool server (%d bytes)...", len(shim_bytes))
+
+        import tarfile
+        from io import BytesIO
+
+        tar_buffer = BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+            info = tarfile.TarInfo(name=SHIM_FILENAME)
+            info.size = len(shim_bytes)
+            info.mode = 0o644
+            tar.addfile(info, BytesIO(shim_bytes))
+        tar_buffer.seek(0)
+        self._container.put_archive("/tmp", tar_buffer.getvalue())
+
+        logger.info("Starting compatibility tool server...")
+        # `python3` on 1.x resolves to /app/.venv/bin/python3 (full stdlib). The
+        # shim is stdlib-only; nohup + & keeps it alive past this exec session.
+        self._container.exec_run(
+            "bash -lc 'cd /workspace && "
+            f"nohup python3 /tmp/{SHIM_FILENAME} "
+            f"--token {self._tool_server_token} "
+            f"--host 0.0.0.0 --port {self._tool_server_port} "
+            ">/tmp/strix_tool_server.log 2>&1 &'",
+            detach=True,
+            user="pentester",
+        )
+        time.sleep(2)
+
+    def _initialize_legacy(self) -> None:
+        """0.1.x images: bring up Caido, then the baked-in strix tool server."""
         if not self._container:
             raise SandboxError("Container not started")
 
@@ -242,11 +310,6 @@ class Sandbox:
         )
 
         time.sleep(2)
-
-        # Wait for health
-        host = self._resolve_docker_host()
-        health_url = f"http://{host}:{self._tool_server_port}/health"
-        self._wait_for_health(health_url)
 
     def _wait_for_health(self, health_url: str) -> None:
         """Wait for tool server to be healthy."""
