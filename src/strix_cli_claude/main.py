@@ -714,6 +714,7 @@ def classify_target(target: str) -> dict[str, str]:
 @click.option("--mount-docker", is_flag=True, help="Mount Docker socket for container scanning (trivy, docker inspect, etc.)")
 @click.option("--keep-container", is_flag=True, help="Keep container running after scan")
 @click.option("--scan-id", help="Scan ID (used by TUI for tracking)")
+@click.option("--model", help="Claude model for the scan agent (e.g. claude-opus-5). Defaults to your configured claude CLI model.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output")
 def main(
     targets: tuple[str, ...],
@@ -725,6 +726,7 @@ def main(
     mount_docker: bool,
     keep_container: bool,
     scan_id: str | None,
+    model: str | None,
     verbose: bool,
 ):
     """Strix Claude Code - AI-powered penetration testing using Claude CLI.
@@ -915,6 +917,7 @@ curl -s -X POST "{sandbox_info["tool_server_url"]}/execute" \\
         else:
             wrapper_initial = "START THE SECURITY ASSESSMENT NOW. Execute all phases automatically: reconnaissance, vulnerability testing, and reporting. Do NOT wait for user input. BEGIN IMMEDIATELY."
 
+        model_arg = f'    --model "{model}" \\\n' if model else ""
         wrapper_script.write_text(f'''#!/bin/bash
 export CLAUDE_CODE_SKIP_TRUST_DIALOG=1
 exec claude \\
@@ -922,7 +925,7 @@ exec claude \\
     --append-system-prompt "$(cat "{system_prompt_path}")" \\
     --permission-mode bypassPermissions \\
     --dangerously-skip-permissions \\
-    "{wrapper_initial}"
+{model_arg}    "{wrapper_initial}"
 ''')
         wrapper_script.chmod(0o755)
 
@@ -1171,6 +1174,8 @@ START PHASE 1 NOW. Be THOROUGH. Miss NOTHING.
             "--permission-mode", "bypassPermissions",
             "--dangerously-skip-permissions",
         ]
+        if model:
+            claude_base_args += ["--model", model]
 
         # Check if we have a TTY for interactive mode
         if sys.stdin.isatty():
