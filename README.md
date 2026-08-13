@@ -216,8 +216,15 @@ Install with: `npm install -g @anthropic-ai/claude-cli`
 ### Container fails to start
 Check if the strix sandbox image is available:
 ```bash
-docker pull ghcr.io/usestrix/strix-sandbox:0.1.11
+docker pull ghcr.io/usestrix/strix-sandbox:1.3.0
 ```
+
+### Sandbox image compatibility
+The default image is `ghcr.io/usestrix/strix-sandbox:1.3.0`. Strix 1.x images no
+longer bundle an in-container tool server, so this wrapper ships a self-contained,
+stdlib-only shim (`sandbox_tool_server.py`) that is copied into the container at
+startup. `Sandbox._initialize_container` auto-detects the image generation, so the
+older `0.1.x` images still work if you pin one with `--image` / `STRIX_IMAGE`.
 
 ### Tools not responding
 The tool server inside the container may need more time to start. Try running with `-v` for verbose output.
