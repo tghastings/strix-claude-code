@@ -252,6 +252,65 @@ class TestResolveDockerHost:
                 host = sb._resolve_docker_host()
                 assert host == "127.0.0.1"
 
+    def test_tcp_localhost_is_still_local(self):
+        """A local daemon exposed over tcp (Docker Desktop, colima, rootless
+        docker) must resolve to loopback, not be treated as remote."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {"DOCKER_HOST": "tcp://localhost:2375"}):
+                assert sb._resolve_docker_host() == "127.0.0.1"
+
+    def test_parses_ssh_docker_host(self):
+        """`docker context`'s ssh:// remote form must resolve to the remote
+        host, not silently fall back to this machine's loopback."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {"DOCKER_HOST": "ssh://user@build-host"}):
+                assert sb._resolve_docker_host() == "build-host"
+
+
+class TestResolveBindHost:
+    """Tests for _resolve_bind_host method."""
+
+    def test_binds_loopback_by_default(self):
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {}, clear=True):
+                assert sb._resolve_bind_host() == "127.0.0.1"
+
+    def test_binds_loopback_for_tcp_localhost(self):
+        """A local daemon reached over tcp://localhost has no reason to be
+        published on every interface - it stays loopback-only like the unix
+        socket case."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {"DOCKER_HOST": "tcp://localhost:2375"}):
+                assert sb._resolve_bind_host() == "127.0.0.1"
+
+    def test_widens_for_remote_tcp_host(self):
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {"DOCKER_HOST": "tcp://192.168.1.100:2375"}):
+                assert sb._resolve_bind_host() == "0.0.0.0"
+
+    def test_widens_for_ssh_remote_host(self):
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox()
+
+            with patch.dict("os.environ", {"DOCKER_HOST": "ssh://user@build-host"}):
+                assert sb._resolve_bind_host() == "0.0.0.0"
+
 
 class TestEnsureImage:
     """Tests for ensure_image method."""
@@ -935,6 +994,40 @@ class TestSetupDockerAccess:
             calls = mock_container.exec_run.call_args_list
             install_calls = [c for c in calls if "aquasecurity/trivy" in str(c)]
             assert len(install_calls) > 0, "Trivy install should be attempted"
+
+    def test_trivy_download_filename_matches_checksum_verification(self):
+        """The tarball must be saved under the exact filename the checksums
+        file lists - sha256sum -c verifies the filename in the checksum
+        line, so downloading to a different name (e.g. a fixed /tmp/trivy.tgz)
+        makes verification fail every time and trivy silently never installs."""
+        with patch("docker.from_env") as mock_docker:
+            mock_docker.return_value = MagicMock()
+            sb = Sandbox(mount_docker_socket=True)
+            mock_container = MagicMock()
+
+            mock_container.exec_run.side_effect = [
+                MagicMock(exit_code=0, output=b""),  # chmod
+                MagicMock(exit_code=0, output=b"/usr/local/bin/docker"),  # which docker
+                MagicMock(exit_code=1, output=b""),  # which trivy - not found
+                MagicMock(exit_code=0, output=b""),  # install trivy
+                MagicMock(exit_code=0, output=b""),  # docker ps verify
+            ]
+            sb._container = mock_container
+
+            sb._setup_docker_access()
+
+            calls = mock_container.exec_run.call_args_list
+            command = next(
+                c.args[0] for c in calls if "aquasecurity/trivy" in str(c.args[0])
+            )
+
+            from strix_cli_claude.sandbox import TRIVY_VERSION
+            tarball = f"trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz"
+            assert f"-o /tmp/{tarball} " in command
+            # grep pattern: bare name (as listed in checksums.txt), not "/tmp/..."
+            assert (" " + tarball + "\\$") in command
+            assert f"tar -xzf /tmp/{tarball}" in command
+            assert "/tmp/trivy.tgz" not in command
 
     def test_verifies_docker_connectivity(self):
         """Should run docker ps to verify connectivity."""

@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import docker
 from docker.errors import DockerException, ImageNotFound, NotFound
@@ -35,6 +36,10 @@ def get_cpu_count(reserve: int = 2) -> int:
 # 0.1.x images still work if pinned via --image / STRIX_IMAGE.
 DEFAULT_SANDBOX_IMAGE = "ghcr.io/usestrix/strix-sandbox:1.3.0"
 SHIM_FILENAME = "sandbox_tool_server.py"
+# Pinned trivy release (with checksum verification at install time, see
+# _setup_docker_access) - bump deliberately, never track a moving branch.
+# Confirmed to exist, with these exact asset names, as of this pin.
+TRIVY_VERSION = "0.73.0"
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 TOOL_SERVER_HEALTH_RETRIES = 10
@@ -95,15 +100,49 @@ class Sandbox:
             except FuturesTimeoutError:
                 raise SandboxError(f"Command timed out: {cmd[:100]}...")
 
-    def _resolve_docker_host(self) -> str:
+    _LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+
+    def _docker_host_is_local(self) -> bool:
+        """Whether the Docker daemon this client talks to runs on this machine.
+
+        Branches on DOCKER_HOST's transport rather than on a resolved hostname
+        string: a unix socket (or no DOCKER_HOST at all) is always local; a
+        tcp/http(s) URL is local only when it points at a loopback address
+        (e.g. Docker Desktop/colima/rootless exposing `tcp://localhost:2375`);
+        `ssh://` (the standard `docker context` remote form) always reaches a
+        daemon on another machine, whatever hostname it names.
+        """
         docker_host = os.getenv("DOCKER_HOST", "")
         if not docker_host:
-            return "127.0.0.1"
-        from urllib.parse import urlparse
+            return True
         parsed = urlparse(docker_host)
-        if parsed.scheme in ("tcp", "http", "https") and parsed.hostname:
-            return parsed.hostname
-        return "127.0.0.1"
+        if parsed.scheme in ("", "unix", "npipe"):
+            return True
+        if parsed.scheme in ("tcp", "http", "https"):
+            return (parsed.hostname or "") in self._LOOPBACK_HOSTNAMES
+        return False
+
+    def _resolve_docker_host(self) -> str:
+        """Host the CLI should use to reach the daemon's published ports."""
+        if self._docker_host_is_local():
+            return "127.0.0.1"
+        parsed = urlparse(os.environ["DOCKER_HOST"])
+        if not parsed.hostname:
+            raise SandboxError(
+                f"Could not determine a host from DOCKER_HOST={os.environ['DOCKER_HOST']!r}"
+            )
+        return parsed.hostname
+
+    def _resolve_bind_host(self) -> str:
+        """Interface to publish container ports on.
+
+        Local Docker (the common case) only needs loopback - the Caido proxy
+        and the tool server (command execution, token-protected) have no
+        reason to be reachable from the LAN/internet. Only widen to all
+        interfaces when the daemon is remote, where the published port must
+        be reachable on that daemon's routable address.
+        """
+        return "127.0.0.1" if self._docker_host_is_local() else "0.0.0.0"
 
     def ensure_image(self) -> None:
         """Pull sandbox image if not available."""
@@ -141,10 +180,12 @@ class Sandbox:
         cpu_count = get_cpu_count()
         self._cpu_count = cpu_count
 
+        bind_host = self._resolve_bind_host()
+
         logger.info(f"Starting container {container_name}")
         logger.info(f"  CPUs available: {cpu_count}")
-        logger.info(f"  Caido proxy port: {self._caido_port}")
-        logger.info(f"  Tool server port: {self._tool_server_port}")
+        logger.info(f"  Caido proxy port: {self._caido_port} (bound to {bind_host})")
+        logger.info(f"  Tool server port: {self._tool_server_port} (bound to {bind_host})")
         logger.info(f"  Docker socket mounted: {self.mount_docker_socket}")
 
         # Build volumes list
@@ -168,8 +209,8 @@ class Sandbox:
             name=container_name,
             hostname=container_name,
             ports={
-                f"{self._caido_port}/tcp": self._caido_port,
-                f"{self._tool_server_port}/tcp": self._tool_server_port,
+                f"{self._caido_port}/tcp": (bind_host, self._caido_port),
+                f"{self._tool_server_port}/tcp": (bind_host, self._tool_server_port),
             },
             cap_add=["NET_ADMIN", "NET_RAW"],
             labels={"strix-cli-scan-id": self.scan_id},
@@ -378,10 +419,27 @@ class Sandbox:
             user="pentester",
         )
         if result.exit_code != 0:
-            logger.info("  Installing trivy...")
+            logger.info(f"  Installing trivy {TRIVY_VERSION}...")
+            # Pinned release + checksum verification, rather than piping the
+            # unpinned install.sh from the mutable `main` branch straight
+            # into a root shell (that script and this container's root
+            # access to /var/run/docker.sock is a full host-compromise path
+            # if the upstream branch is ever tampered with or MITM'd).
+            # sha256sum -c verifies the exact filename named in the checksum
+            # line, so the tarball has to be saved under its canonical name
+            # (not a fixed /tmp/trivy.tgz) or verification fails every time.
+            tarball = f"trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz"
             install_result = self._container.exec_run(
                 "bash -c '"
-                "curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin"
+                f"curl -fsSL -o /tmp/{tarball} "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/{tarball} && "
+                f"curl -fsSL -o /tmp/trivy_checksums.txt "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/trivy_{TRIVY_VERSION}_checksums.txt && "
+                f"grep \" {tarball}\\$\" /tmp/trivy_checksums.txt | (cd /tmp && sha256sum -c -) && "
+                f"tar -xzf /tmp/{tarball} -C /tmp trivy && "
+                "mv /tmp/trivy /usr/local/bin/trivy && "
+                "chmod +x /usr/local/bin/trivy && "
+                f"rm -f /tmp/{tarball} /tmp/trivy_checksums.txt"
                 "'",
                 user="root",
             )
