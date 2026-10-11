@@ -869,19 +869,24 @@ def main(
         # Write MCP config to temp file
         temp_config_dir = tempfile.mkdtemp(prefix=f"strix-cli-{scan_id}")
         mcp_config_path = Path(temp_config_dir) / "mcp.json"
-        mcp_config_path.write_text(json.dumps(mcp_config, indent=2))
+        mcp_config_path.write_text(json.dumps(mcp_config, indent=2), encoding="utf-8")
 
         # Write tool server credentials for parallel subagents
         # This allows subagents to call the tool server directly via curl
-        creds_file = Path("/tmp/strix-tool-server.env")
-        creds_file.write_text(f"""STRIX_TOOL_URL={sandbox_info["tool_server_url"]}
+        # POSIX-only: these are bash helpers for parallel subagents. On Windows
+        # (os.name == "nt") the "/tmp/..." paths resolve to a non-existent
+        # "C:\tmp\..." and bash/jq/curl are unavailable, so skip them. The main
+        # scan still works because the agent uses the MCP tools directly.
+        if os.name != "nt":
+            creds_file = Path("/tmp/strix-tool-server.env")
+            creds_file.write_text(f"""STRIX_TOOL_URL={sandbox_info["tool_server_url"]}
 STRIX_TOOL_TOKEN={sandbox_info["tool_server_token"]}
 """)
-        creds_file.chmod(0o600)
+            creds_file.chmod(0o600)
 
-        # Create helper script for subagents to call tools
-        helper_script = Path("/tmp/strix-tool")
-        helper_script.write_text(f'''#!/bin/bash
+            # Create helper script for subagents to call tools
+            helper_script = Path("/tmp/strix-tool")
+            helper_script.write_text(f'''#!/bin/bash
 # Helper script for parallel subagents to call Strix tools
 # Usage: strix-tool <tool_name> '<json_args>'
 # Example: strix-tool terminal_execute '{{"command": "nmap -p- target.com"}}'
@@ -895,7 +900,7 @@ curl -s -X POST "{sandbox_info["tool_server_url"]}/execute" \\
   -d "{{\\"tool_name\\": \\"$TOOL_NAME\\", \\"kwargs\\": $TOOL_ARGS, \\"agent_id\\": \\"subagent\\"}}" \\
   | jq -r '.result.content // .result // .error // "No output"'
 ''')
-        helper_script.chmod(0o755)
+            helper_script.chmod(0o755)
 
         # Generate system prompt with all targets
         target_info = "\n".join(target_descriptions)
@@ -906,7 +911,7 @@ curl -s -X POST "{sandbox_info["tool_server_url"]}/execute" \\
 
         # Write system prompt to file
         system_prompt_path = Path(temp_config_dir) / "system_prompt.txt"
-        system_prompt_path.write_text(system_prompt)
+        system_prompt_path.write_text(system_prompt, encoding="utf-8")
 
         # Create a wrapper script that runs claude with our config
         wrapper_script = Path(temp_config_dir) / "run_claude.sh"
@@ -926,7 +931,7 @@ exec claude \\
     --permission-mode bypassPermissions \\
     --dangerously-skip-permissions \\
 {model_arg}    "{wrapper_initial}"
-''')
+''', encoding="utf-8")
         wrapper_script.chmod(0o755)
 
         # Initial prompt to start the scan automatically
@@ -1166,9 +1171,20 @@ START PHASE 1 NOW. Be THOROUGH. Miss NOTHING.
 """
 
         # Common claude args
-        claude_env = {**os.environ, "CLAUDE_CODE_SKIP_TRUST_DIALOG": "1"}
+        claude_env = {
+            **os.environ,
+            "CLAUDE_CODE_SKIP_TRUST_DIALOG": "1",
+            # Force UTF-8 mode in the claude subprocess and the MCP server it
+            # spawns, so writing the report (which contains Unicode like "->")
+            # doesn't hit Windows' cp1252 'charmap' codec error.
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+        }
+        # On Windows, CreateProcess does not apply PATHEXT, so a bare "claude"
+        # won't resolve to claude.exe. Resolve the full path up front.
+        claude_exe = shutil.which("claude") or "claude"
         claude_base_args = [
-            "claude",
+            claude_exe,
             "--mcp-config", str(mcp_config_path),
             "--append-system-prompt", system_prompt,
             "--permission-mode", "bypassPermissions",
