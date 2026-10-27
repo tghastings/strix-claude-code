@@ -373,6 +373,66 @@ class TestMainCli:
                 assert "strix_report" in result.output or mock_instance.start.called
 
 
+class TestClaudeCliArgs:
+    """Regression tests for the args passed to the `claude` subprocess.
+
+    --disallowedTools is declared variadic by the claude CLI: passed as two
+    separate argv items ("--disallowedTools", "value"), it keeps consuming
+    whatever argv token comes right after - including the initial scan
+    prompt in the TTY path, which then runs with the prompt swallowed as a
+    bogus tool name instead of being sent to Claude. It must be a single
+    "--flag=value" token instead.
+    """
+
+    def _run_and_get_claude_args(self, isatty: bool):
+        from click.testing import CliRunner
+        runner = CliRunner()
+
+        with patch.object(main, "check_claude_cli", return_value=True):
+            with patch.object(main, "Sandbox") as mock_sandbox:
+                mock_instance = MagicMock()
+                mock_instance.start.return_value = {
+                    "container_name": "test",
+                    "tool_server_url": "http://localhost:8080",
+                    "tool_server_token": "token",
+                    "scan_id": "abc123",
+                    "cpu_count": 4,
+                }
+                mock_sandbox.return_value = mock_instance
+
+                with patch("subprocess.run") as mock_run:
+                    with patch("sys.stdin") as mock_stdin:
+                        mock_stdin.isatty.return_value = isatty
+                        runner.invoke(main.main, ["-t", "https://example.com"])
+
+                    args = mock_run.call_args[0][0]
+                    return args
+
+    def test_disallowed_tools_is_a_single_token_tty(self):
+        args = self._run_and_get_claude_args(isatty=True)
+        assert "--disallowedTools=WebFetch,WebSearch,NotebookEdit" in args
+        assert "--disallowedTools" not in args
+
+    def test_disallowed_tools_is_a_single_token_print_mode(self):
+        args = self._run_and_get_claude_args(isatty=False)
+        assert "--disallowedTools=WebFetch,WebSearch,NotebookEdit" in args
+        assert "--disallowedTools" not in args
+
+    def test_initial_prompt_is_last_and_not_swallowed(self):
+        """The prompt must be its own argv token, immediately after (TTY) or
+        after --print (non-TTY) - never adjacent to the variadic flag."""
+        args = self._run_and_get_claude_args(isatty=True)
+        disallowed_index = next(
+            i for i, a in enumerate(args) if a.startswith("--disallowedTools")
+        )
+        # At least one more flag (or none) may sit between, but the prompt
+        # itself (last element) must not be the very next token after a
+        # bare "--disallowedTools" - that adjacency is exactly what let the
+        # claude CLI's variadic parser eat the prompt as a tool name.
+        assert args[disallowed_index] != "--disallowedTools"
+        assert args[-1] not in ("WebFetch", "WebSearch", "NotebookEdit")
+
+
 class TestWhiteboxInitialPrompt:
     """Tests for whitebox-specific initial prompt generation."""
 
@@ -613,21 +673,27 @@ class TestDockerSystemPrompt:
         assert "Docker socket is mounted" in result
         assert "host's Docker daemon" in result or "DooD" in result
 
-    def test_docker_instructions_include_cli_install(self):
-        """Docker instructions should include Docker CLI install command."""
+    def test_docker_instructions_do_not_reinstall_cli(self):
+        """Docker CLI is installed (pinned) by the sandbox before the agent
+        starts - the prompt must not tell the agent to (re)install it itself
+        via an unpinned pipe-to-shell."""
         result = main.get_system_prompt(
             "URL: https://example.com", "deep", 4, mount_docker=True
         )
-        assert "which docker" in result
-        assert "get.docker.com" in result
+        assert "which docker" not in result
+        assert "get.docker.com" not in result
+        assert "already installed" in result
 
-    def test_docker_instructions_include_trivy_install(self):
-        """Docker instructions should include trivy install command."""
+    def test_docker_instructions_do_not_reinstall_trivy(self):
+        """trivy is installed (pinned, checksum-verified) by the sandbox
+        before the agent starts - the prompt must not fall back to piping
+        the mutable install.sh script from trivy's main branch."""
         result = main.get_system_prompt(
             "URL: https://example.com", "deep", 4, mount_docker=True
         )
-        assert "which trivy" in result
-        assert "aquasecurity/trivy" in result
+        assert "which trivy" not in result
+        assert "aquasecurity/trivy/main/contrib/install.sh" not in result
+        assert "trivy image" in result
 
     def test_docker_instructions_include_basic_commands(self):
         """Docker instructions should list basic Docker commands."""
