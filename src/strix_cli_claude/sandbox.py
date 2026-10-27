@@ -428,18 +428,30 @@ class Sandbox:
             # sha256sum -c verifies the exact filename named in the checksum
             # line, so the tarball has to be saved under its canonical name
             # (not a fixed /tmp/trivy.tgz) or verification fails every time.
-            tarball = f"trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz"
+            #
+            # The container's architecture decides which release asset is
+            # correct (the sandbox image runs linux/arm64 on Apple Silicon and
+            # ARM CI, linux/amd64 elsewhere), so resolve it with `uname -m`
+            # inside the container rather than hardcoding Linux-64bit, which
+            # would install an x86-64 binary that can't exec on arm64.
             install_result = self._container.exec_run(
                 "bash -c '"
-                f"curl -fsSL -o /tmp/{tarball} "
-                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/{tarball} && "
-                f"curl -fsSL -o /tmp/trivy_checksums.txt "
-                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/trivy_{TRIVY_VERSION}_checksums.txt && "
-                f"grep \" {tarball}\\$\" /tmp/trivy_checksums.txt | (cd /tmp && sha256sum -c -) && "
-                f"tar -xzf /tmp/{tarball} -C /tmp trivy && "
-                "mv /tmp/trivy /usr/local/bin/trivy && "
-                "chmod +x /usr/local/bin/trivy && "
-                f"rm -f /tmp/{tarball} /tmp/trivy_checksums.txt"
+                "set -e; "
+                "case \"$(uname -m)\" in "
+                "x86_64|amd64) TRIVY_ARCH=64bit ;; "
+                "aarch64|arm64) TRIVY_ARCH=ARM64 ;; "
+                "*) echo \"unsupported arch: $(uname -m)\" >&2; exit 1 ;; "
+                "esac; "
+                f"TARBALL=trivy_{TRIVY_VERSION}_Linux-${{TRIVY_ARCH}}.tar.gz; "
+                "curl -fsSL -o /tmp/$TARBALL "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/$TARBALL; "
+                "curl -fsSL -o /tmp/trivy_checksums.txt "
+                f"https://github.com/aquasecurity/trivy/releases/download/v{TRIVY_VERSION}/trivy_{TRIVY_VERSION}_checksums.txt; "
+                "grep \" $TARBALL\\$\" /tmp/trivy_checksums.txt | (cd /tmp && sha256sum -c -); "
+                "tar -xzf /tmp/$TARBALL -C /tmp trivy; "
+                "mv /tmp/trivy /usr/local/bin/trivy; "
+                "chmod +x /usr/local/bin/trivy; "
+                "rm -f /tmp/$TARBALL /tmp/trivy_checksums.txt"
                 "'",
                 user="root",
             )

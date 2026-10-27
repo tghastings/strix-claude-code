@@ -996,10 +996,13 @@ class TestSetupDockerAccess:
             assert len(install_calls) > 0, "Trivy install should be attempted"
 
     def test_trivy_download_filename_matches_checksum_verification(self):
-        """The tarball must be saved under the exact filename the checksums
-        file lists - sha256sum -c verifies the filename in the checksum
-        line, so downloading to a different name (e.g. a fixed /tmp/trivy.tgz)
-        makes verification fail every time and trivy silently never installs."""
+        """Download, checksum verification and extraction must all reference
+        the same $TARBALL (the exact name the checksums file lists) - sha256sum
+        -c verifies the filename in the checksum line, so a mismatching or fixed
+        name (e.g. /tmp/trivy.tgz) makes verification fail and trivy silently
+        never installs. The name is resolved from the container's architecture
+        via `uname -m`, so both the amd64 and arm64 asset names must be present
+        and the x86-64 asset must never be hardcoded as the only choice."""
         with patch("docker.from_env") as mock_docker:
             mock_docker.return_value = MagicMock()
             sb = Sandbox(mount_docker_socket=True)
@@ -1022,12 +1025,18 @@ class TestSetupDockerAccess:
             )
 
             from strix_cli_claude.sandbox import TRIVY_VERSION
-            tarball = f"trivy_{TRIVY_VERSION}_Linux-64bit.tar.gz"
-            assert f"-o /tmp/{tarball} " in command
-            # grep pattern: bare name (as listed in checksums.txt), not "/tmp/..."
-            assert (" " + tarball + "\\$") in command
-            assert f"tar -xzf /tmp/{tarball}" in command
+            # Architecture is resolved in-container; both assets are selectable.
+            assert "uname -m" in command
+            assert "TRIVY_ARCH=64bit" in command
+            assert "TRIVY_ARCH=ARM64" in command
+            assert f"TARBALL=trivy_{TRIVY_VERSION}_Linux-${{TRIVY_ARCH}}.tar.gz" in command
+            # Download, checksum grep and extraction all use the same $TARBALL.
+            assert "-o /tmp/$TARBALL " in command
+            assert ' $TARBALL\\$' in command  # grep: bare name, not "/tmp/..."
+            assert "tar -xzf /tmp/$TARBALL" in command
             assert "/tmp/trivy.tgz" not in command
+            # The checksums file itself is still pinned to the version.
+            assert f"trivy_{TRIVY_VERSION}_checksums.txt" in command
 
     def test_verifies_docker_connectivity(self):
         """Should run docker ps to verify connectivity."""
