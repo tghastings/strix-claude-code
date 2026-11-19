@@ -76,7 +76,7 @@ See the MCP server implementation for the full tool inventory.
 Spawn a Claude CLI agent to run Strix interactively:
 ```bash
 # Use coding-agent skill with PTY
-exec command="claude --model claude-opus-4-6" pty=true
+exec command="claude --model claude-mythos-5-2" pty=true
 # Then at the Claude Code prompt:
 # > strix-claude-cli -t https://target.com -m deep
 ```
@@ -85,7 +85,7 @@ exec command="claude --model claude-opus-4-6" pty=true
 For automated scans without TUI interaction:
 ```bash
 # Background exec with PTY (required for interactive Claude CLI)
-exec command="strix-claude-cli -t https://target.com -o report.md" pty=true background=true
+exec command="ANTHROPIC_MODEL=claude-mythos-5-2 strix-claude-cli -t https://target.com -o report.md" pty=true background=true
 ```
 
 **Important**: Always use `pty=true` when running Strix from OpenClaw — Claude CLI requires a TTY. Without PTY, the scan will fall back to non-interactive mode and print manual instructions instead of executing.
@@ -105,9 +105,9 @@ This enables true headless/automated security scanning without manual interventi
 ```python
 # In an OpenClaw agent session:
 
-# 1. Spawn a Claude Opus agent to run the scan
+# 1. Run the scan on Claude Mythos 5.2 (strix-claude-cli has no --model flag; ANTHROPIC_MODEL picks the model)
 exec(
-    command="strix-claude-cli -t https://juice-shop.herokuapp.com -m deep -o juice-shop-report.md",
+    command="ANTHROPIC_MODEL=claude-mythos-5-2 strix-claude-cli -t https://juice-shop.herokuapp.com -m deep -o juice-shop-report.md",
     pty=True,
     background=True
 )
